@@ -92,8 +92,8 @@ data BuiltinId
   | BuiltinTranspProof
   | BuiltinSqFill
   | BuiltinSqFillPi
-  | BuiltinSqPFill
-  | BuiltinSqPFillPi
+  -- | BuiltinSqPFill
+  -- | BuiltinSqPFillPi
   | BuiltinIsOne1
   | BuiltinIsOne2
   | BuiltinIsOneEmpty
@@ -317,8 +317,8 @@ instance IsBuiltin BuiltinId where
     BuiltinTranspProof                       -> "TRANSPPROOF"
     BuiltinSqFill                            -> "SQFILL"
     BuiltinSqFillPi                          -> "SQFILLPI"
-    BuiltinSqPFill                           -> "SQPFILL"
-    BuiltinSqPFillPi                         -> "SQPFILLPI"
+    -- BuiltinSqPFill                           -> "SQPFILL"
+    -- BuiltinSqPFillPi                         -> "SQPFILLPI"
     BuiltinIsOne1                            -> "ISONE1"
     BuiltinIsOne2                            -> "ISONE2"
     BuiltinIsOneEmpty                        -> "ISONEEMPTY"
@@ -538,7 +538,7 @@ builtinNat, builtinSuc, builtinZero, builtinNatPlus, builtinNatMinus,
   builtinEquiv, builtinEquivFun, builtinEquivProof,
   builtinTranspProof,
   builtinSqFill, builtinSqFillPi,
-  builtinSqPFill, builtinSqPFillPi,
+  -- builtinSqPFill, builtinSqPFillPi,
   builtinSizeUniv, builtinSize, builtinSizeLt,
   builtinSizeSuc, builtinSizeInf, builtinSizeMax,
   builtinInf, builtinSharp, builtinFlat,
@@ -649,8 +649,8 @@ builtinEquivProof                        = BuiltinEquivProof
 builtinTranspProof                       = BuiltinTranspProof
 builtinSqFill                            = BuiltinSqFill
 builtinSqFillPi                          = BuiltinSqFillPi
-builtinSqPFill                           = BuiltinSqPFill
-builtinSqPFillPi                         = BuiltinSqPFillPi
+-- builtinSqPFill                           = BuiltinSqPFill
+-- builtinSqPFillPi                         = BuiltinSqPFillPi
 builtinIsOne1                            = BuiltinIsOne1
 builtinIsOne2                            = BuiltinIsOne2
 builtinIsOneEmpty                        = BuiltinIsOneEmpty
@@ -839,7 +839,7 @@ data PrimitiveId
   | PrimHComp
   | Prim_uip
   | Prim_sqFill
-  | Prim_sqPFill
+  -- | Prim_sqPFill
   --  Integer
   | PrimShowInteger
   -- Natural
@@ -982,7 +982,7 @@ instance IsBuiltin PrimitiveId where
     PrimHComp                             -> "primHComp"
     Prim_uip                              -> "prim^uip"
     Prim_sqFill                           -> "prim^sqFill"
-    Prim_sqPFill                          -> "prim^sqPFill"
+    -- Prim_sqPFill                          -> "prim^sqPFill"
     --  Integer
     PrimShowInteger                       -> "primShowInteger"
     -- Natural
@@ -1093,7 +1093,8 @@ instance IsBuiltin PrimitiveId where
 builtinSubOut,
   builtinIMin, builtinIMax, builtinINeg,
   builtinGlue, builtin_glue, builtin_unglue, builtin_glueU, builtin_unglueU,
-  builtin_uip, builtin_sqFill, builtin_sqPFill,
+  builtin_sqFill,
+  -- builtin_uip, builtin_sqPFill,
   builtinFaceForall, builtinComp, builtinPOr,
   builtinTrans,  builtinHComp, builtinLockUniv, builtinRewriteNoMatch
   :: PrimitiveId
@@ -1106,9 +1107,9 @@ builtin_glue                             = Prim_glue
 builtin_unglue                           = Prim_unglue
 builtin_glueU                            = Prim_glueU
 builtin_unglueU                          = Prim_unglueU
-builtin_uip                              = Prim_uip
 builtin_sqFill                           = Prim_sqFill
-builtin_sqPFill                          = Prim_sqPFill
+-- builtin_uip                              = Prim_uip
+-- builtin_sqPFill                          = Prim_sqPFill
 builtinFaceForall                        = PrimFaceForall
 builtinComp                              = PrimComp
 builtinPOr                               = PrimPOr
