@@ -92,6 +92,22 @@ coreBuiltins =
                                                               ((sort . tmSort) <$> (cl primLevelMax <@> a <@> b))
                                                               )
                                                              [BuiltinSigmaCon])
+  , (builtinProduct                          |-> BuiltinData (runNamesT [] $
+                                                              hPi' "la" (el $ cl primLevel) $ \ a ->
+                                                              hPi' "lb" (el $ cl primLevel) $ \ b ->
+                                                              nPi' "A" (sort . tmSort <$> a) $ \bA ->
+                                                              nPi' "B" (sort . tmSort <$> b) $ \bB ->
+                                                              ((sort . tmSort) <$> (cl primLevelMax <@> a <@> b))
+                                                              )
+                                                             [BuiltinProductCon])
+  , (builtinCoproduct                        |-> BuiltinData (runNamesT [] $
+                                                              hPi' "la" (el $ cl primLevel) $ \ a ->
+                                                              hPi' "lb" (el $ cl primLevel) $ \ b ->
+                                                              nPi' "A" (sort . tmSort <$> a) $ \bA ->
+                                                              nPi' "B" (sort . tmSort <$> b) $ \bB ->
+                                                              ((sort . tmSort) <$> (cl primLevelMax <@> a <@> b))
+                                                              )
+                                                             [BuiltinInl, BuiltinInr])
   , (builtinUnit                             |-> BuiltinData tset [builtinUnitUnit])  -- actually record, but they are treated the same
   , (builtinAgdaLiteral                      |-> BuiltinData tset [builtinAgdaLitNat, builtinAgdaLitWord64, builtinAgdaLitFloat,
                                                                    builtinAgdaLitChar, builtinAgdaLitString,
@@ -263,6 +279,19 @@ coreBuiltins =
                                                                   )) -- SqFill ΠA.B
 
                                                                 (const $ const $ return ()))
+  , (builtinSqFillCoproduct                         |-> BuiltinUnknown (Just $ requireCubical CWithoutGlue >> runNamesT [] ( do
+                                                                      let coprodAB bA bB = primCoproduct <@> primLevelZero <@> primLevelZero <@> bA <@> bB
+                                                                      t <- nPi' "A" tset $ \ bA -> 
+                                                                        nPi' "sqFillA" (el (primSqFill <@> bA)) $ \ sqFillA ->
+                                                                        nPi' "B" tset $ \ bB -> 
+                                                                        nPi' "sqFillB" (el (primSqFill <@> bB)) $ \ sqFillB ->
+                                                                        (el $ primSqFill <@> coprodAB bA bB)
+                                                                      reportSDoc "cubical.prim.uip" 60 $ "builtin: the type of SqFillCoproduct is"
+                                                                      reportSDoc "cubical.prim.uip" 60 $ text $ show t
+                                                                      return t
+                                                                    )) -- SqFill A + B
+
+                                                                  (const $ const $ return ()))
 
   , (builtinSqFillUnit                      |-> BuiltinUnknown (Just $ requireCubical CWithoutGlue >> el (primSqFill <@> primUnit))
                                                                 (const $ const $ return ()))
@@ -289,14 +318,26 @@ coreBuiltins =
                                                                       nPi' "a" (el bA) $ \ a -> 
                                                                       nPi' "b" (el bA) $ \ b -> 
                                                                       (el $ primSqFill <@> bA) --> 
+<<<<<<< HEAD
                                                                       (el $ primSqFill <@> (primPath <#> primLevelZero <@> bA <@> a <@> b))))
+||||||| parent of a73f2c27 ((co-)product sqfill working)
+                                                                      (el $ primSqFill <@> (primPath <#@> primLevelZero <@> bA <@> a <@> b))))
+=======
+                                                                      (el $ primSqFill <@> (primPath <#> primLevelZero <#> bA <@> a <@> b))))
+>>>>>>> a73f2c27 ((co-)product sqfill working)
                                                                 (const $ const $ return ()))
   , (builtinSqFillPathP                         |-> BuiltinUnknown (Just $ requireCubical CWithoutGlue >> runNamesT [] (
                                                                       nPi' "A" tset $ \ bA -> 
                                                                       nPi' "B" tset $ \ bB -> 
                                                                       nPi' "a" (el bA) $ \ a -> 
                                                                       nPi' "b" (el bB) $ \ b -> 
+<<<<<<< HEAD
                                                                       nPi' "P" (el $ primPath <#> (primLevelSuc <@> primLevelZero) <@> (unEl <$> tset) <@> bA <@> bB) $ \ bP -> 
+||||||| parent of a73f2c27 ((co-)product sqfill working)
+                                                                      nPi' "P" (el $ primPath <#@> (primLevelSuc <@> primLevelZero) <@> (unEl <$> tset) <@> bA <@> bB) $ \ bP -> 
+=======
+                                                                      nPi' "P" (el $ primPath <#> (primLevelSuc <@> primLevelZero) <#> (unEl <$> tset) <@> bA <@> bB) $ \ bP -> 
+>>>>>>> a73f2c27 ((co-)product sqfill working)
                                                                       (el $ primSqFill <@> bA) -->
                                                                       (el $ primSqFill <@> (primPathP <#> primLevelZero <@> bP <@> a <@> b))))
                                                                 (const $ const $ return ()))

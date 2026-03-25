@@ -80,7 +80,13 @@ import Agda.Utils.Impossible
 #include "MachDeps.h"
 
 currentInterfaceVersion :: Word64
+<<<<<<< HEAD
 currentInterfaceVersion = 20261003 * 10 + 0
+||||||| parent of a73f2c27 ((co-)product sqfill working)
+currentInterfaceVersion = 20260324 * 10 + 0
+=======
+currentInterfaceVersion = 20260325 * 10 + 0
+>>>>>>> a73f2c27 ((co-)product sqfill working)
 
 ifaceVersionSize :: Int
 ifaceVersionSize = SIZEOF_WORD64

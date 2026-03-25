@@ -66,6 +66,11 @@ data BuiltinId
   | BuiltinUnitUnit
   | BuiltinSigma
   | BuiltinSigmaCon
+  | BuiltinProduct
+  | BuiltinProductCon
+  | BuiltinCoproduct
+  | BuiltinInl
+  | BuiltinInr
   | BuiltinBool
   | BuiltinTrue
   | BuiltinFalse
@@ -99,6 +104,7 @@ data BuiltinId
   | BuiltinSqFillList
   | BuiltinSqFillMaybe
   | BuiltinSqFillProduct
+  | BuiltinSqFillCoproduct
   | BuiltinSqFillPath
   | BuiltinSqFillPathP
   -- | BuiltinSqPFill
@@ -300,6 +306,11 @@ instance IsBuiltin BuiltinId where
     BuiltinUnitUnit                          -> "UNITUNIT"
     BuiltinSigma                             -> "SIGMA"
     BuiltinSigmaCon                          -> "SIGMACON"
+    BuiltinProduct                           -> "PRODUCT"
+    BuiltinProductCon                        -> "PRODUCTCON"
+    BuiltinCoproduct                         -> "COPRODUCT"
+    BuiltinInl                               -> "INL"
+    BuiltinInr                               -> "INR"
     BuiltinBool                              -> "BOOL"
     BuiltinTrue                              -> "TRUE"
     BuiltinFalse                             -> "FALSE"
@@ -332,7 +343,8 @@ instance IsBuiltin BuiltinId where
     BuiltinSqFillNat                         -> "SQFILLNAT"
     BuiltinSqFillList                        -> "SQFILLLIST"
     BuiltinSqFillMaybe                       -> "SQFILLMAYBE"
-    BuiltinSqFillProduct                       -> "SQFILLPRODUCT"
+    BuiltinSqFillProduct                     -> "SQFILLPRODUCT"
+    BuiltinSqFillCoproduct                   -> "SQFILLCOPRODUCT"
     BuiltinSqFillPath                        -> "SQFILLPATH"
     BuiltinSqFillPathP                       -> "SQFILLPATHP"
     -- BuiltinSqPFill                           -> "SQPFILL"
@@ -547,6 +559,8 @@ builtinNat, builtinSuc, builtinZero, builtinNatPlus, builtinNatMinus,
   builtinWord64,
   builtinFloat, builtinChar, builtinString, builtinUnit, builtinUnitUnit,
   builtinSigma,
+  builtinProduct, builtinProductCon,
+  builtinCoproduct, builtinInl, builtinInr,
   builtinBool, builtinTrue, builtinFalse,
   builtinList, builtinNil, builtinCons, builtinIO,
   builtinMaybe, builtinNothing, builtinJust,
@@ -556,7 +570,8 @@ builtinNat, builtinSuc, builtinZero, builtinNatPlus, builtinNatMinus,
   builtinEquiv, builtinEquivFun, builtinEquivProof,
   builtinTranspProof,
   builtinSqFill, builtinSqFillPi, builtinSqFillSigma,
-  builtinSqFillUnit, builtinSqFillBool, builtinSqFillNat, builtinSqFillList, builtinSqFillMaybe, builtinSqFillProduct,
+  builtinSqFillUnit, builtinSqFillBool, builtinSqFillNat, builtinSqFillList, builtinSqFillMaybe,
+  builtinSqFillProduct, builtinSqFillCoproduct,
   builtinSqFillPath, builtinSqFillPathP,
   -- builtinSqPFill, builtinSqPFillPi,
   builtinSizeUniv, builtinSize, builtinSizeLt,
@@ -643,6 +658,11 @@ builtinString                            = BuiltinString
 builtinUnit                              = BuiltinUnit
 builtinUnitUnit                          = BuiltinUnitUnit
 builtinSigma                             = BuiltinSigma
+builtinProduct                           = BuiltinProduct
+builtinProductCon                        = BuiltinProductCon
+builtinCoproduct                         = BuiltinCoproduct
+builtinInl                               = BuiltinInl
+builtinInr                               = BuiltinInr
 builtinBool                              = BuiltinBool
 builtinTrue                              = BuiltinTrue
 builtinFalse                             = BuiltinFalse
@@ -676,6 +696,7 @@ builtinSqFillNat                        = BuiltinSqFillNat
 builtinSqFillList                        = BuiltinSqFillList
 builtinSqFillMaybe                        = BuiltinSqFillMaybe
 builtinSqFillProduct                        = BuiltinSqFillProduct
+builtinSqFillCoproduct                        = BuiltinSqFillCoproduct
 builtinSqFillPath                        = BuiltinSqFillPath
 builtinSqFillPathP                        = BuiltinSqFillPathP
 -- builtinSqPFill                           = BuiltinSqPFill
