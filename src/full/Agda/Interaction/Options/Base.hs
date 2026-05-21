@@ -1073,7 +1073,7 @@ infectiveCoinfectiveOptions =
             (Just CUip, Just CErased) -> False
             (c,         Just CUip)    -> c == Just CUip
             _                         -> True
-      , icOptionWarning = \m -> fsep $
+      , icOptionWarning = \_ _ m -> fsep $
           pwords "Importing module" ++ [pretty m] ++
           pwords "which might contain glue to a module with the option" ++
           pwords (flagName ++ ".")
