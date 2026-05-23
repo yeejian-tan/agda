@@ -315,26 +315,14 @@ coreBuiltins =
                                                                       nPi' "a" (el bA) $ \ a -> 
                                                                       nPi' "b" (el bA) $ \ b -> 
                                                                       (el $ primSqFill <@> bA) --> 
-<<<<<<< HEAD
                                                                       (el $ primSqFill <@> (primPath <#> primLevelZero <@> bA <@> a <@> b))))
-||||||| parent of a73f2c27 ((co-)product sqfill working)
-                                                                      (el $ primSqFill <@> (primPath <#@> primLevelZero <@> bA <@> a <@> b))))
-=======
-                                                                      (el $ primSqFill <@> (primPath <#> primLevelZero <#> bA <@> a <@> b))))
->>>>>>> a73f2c27 ((co-)product sqfill working)
                                                                 (const $ const $ return ()))
   , (builtinSqFillPathP                         |-> BuiltinUnknown (Just $ requireCubical CWithoutGlue >> runNamesT [] (
                                                                       nPi' "A" tset $ \ bA -> 
                                                                       nPi' "B" tset $ \ bB -> 
                                                                       nPi' "a" (el bA) $ \ a -> 
                                                                       nPi' "b" (el bB) $ \ b -> 
-<<<<<<< HEAD
                                                                       nPi' "P" (el $ primPath <#> (primLevelSuc <@> primLevelZero) <@> (unEl <$> tset) <@> bA <@> bB) $ \ bP -> 
-||||||| parent of a73f2c27 ((co-)product sqfill working)
-                                                                      nPi' "P" (el $ primPath <#@> (primLevelSuc <@> primLevelZero) <@> (unEl <$> tset) <@> bA <@> bB) $ \ bP -> 
-=======
-                                                                      nPi' "P" (el $ primPath <#> (primLevelSuc <@> primLevelZero) <#> (unEl <$> tset) <@> bA <@> bB) $ \ bP -> 
->>>>>>> a73f2c27 ((co-)product sqfill working)
                                                                       (el $ primSqFill <@> bA) -->
                                                                       (el $ primSqFill <@> (primPathP <#> primLevelZero <@> bP <@> a <@> b))))
                                                                 (const $ const $ return ()))
