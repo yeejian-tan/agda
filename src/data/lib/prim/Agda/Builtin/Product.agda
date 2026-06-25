@@ -8,7 +8,8 @@ open import Agda.Sigma
 module Agda.Builtin.Product where
 
 open import Agda.Primitive
-open import Agda.Builtin.Sigma
+open import Agda.Builtin.Sigma using (Σ)
+open import Agda.Builtin.Sigma public hiding (Σ)
 
 infixr 5 _×_
 
