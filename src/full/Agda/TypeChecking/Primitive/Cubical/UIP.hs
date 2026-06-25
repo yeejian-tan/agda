@@ -15,51 +15,36 @@ import Agda.TypeChecking.Primitive.Base
 import Agda.TypeChecking.Substitute
 
 import Agda.Utils.Impossible
-import Agda.TypeChecking.Level (LevelKit(lvlZero))
 import Agda.TypeChecking.SizedTypes.Utils (debug)
 import Agda.Syntax.Common.Pretty (Pretty(pretty))
 import Agda.TypeChecking.Pretty
 import Agda.TypeChecking.Warnings (warning)
 import Agda.TypeChecking.Free (freeIn)
 import Agda.Utils.Maybe (isJust, fromJust)
+-- import Agda.TypeChecking.Level (LevelKit(lvlZero))
 
 isNonDep :: Term -> Maybe Term
 isNonDep (Lam _ b) = isNoAbs b
 isNonDep _         = Nothing
 
-sqFillProduct :: (HasBuiltins m) => (Arg Term) -> (Arg Term) -> m Term
-sqFillProduct bA bB = do
-  tmSqFill    <- getTerm "for SqFillProduct" builtin_sqFill -- recursive!
-  sqFillProduct <- getTerm "for SqFillProduct" builtinSqFillProduct
-  let
-    sqFillA = apply tmSqFill [bA]
-    sqFillB = apply tmSqFill [bB]
-  return $ apply sqFillProduct [bA, defaultArg sqFillA, bB, defaultArg sqFillB]
-
-sqFillSigma :: (HasBuiltins m) => (Arg Term) -> (Arg Term) -> m Term
-sqFillSigma bA bB = do
-  tmSqFill    <- getTerm "for SqFillProduct" builtin_sqFill -- recursive!
-  let sqFillA :: Term = apply tmSqFill [bA]
-  sqFillSigma <- getTerm "for SqFillSigma" builtinSqFillSigma
-  sqFillB <- runNamesT [] $ ( do
-    bB' <- open bB
-    sf <- open tmSqFill
-    lam "a" $ \a -> sf <@> (bB' <@> a))
-  return $ apply sqFillSigma [bA, defaultArg sqFillA, defaultArg bB, defaultArg sqFillB]
-
+-- Only for Type.
 prim_sqFill' :: TCM PrimitiveImpl
 prim_sqFill' = do
   requireCubical CUip
   t <- runNamesT [] $
-       nPi' "A" tset $ \ bA ->
-       el $ primSqFill <@> bA
+       hPi' "l" (el $ cl primLevel) $ \ la ->
+       nPi' "A" (sort . tmSort <$> la) $ \ bA ->
+       el $ primSqFill <#> la <@> bA
 
   return $ PrimImpl t $
     -- primfunargoccur is for positivity when my primitive is applied to an inductive type.
-    -- YJ: try when applying to an inductive type.
-    PrimFun __IMPOSSIBLE__ 1 [] $ \ts nelims -> do
+    -- try when applying to an inductive type.
+    PrimFun __IMPOSSIBLE__ 2 [] $ \ts nelims -> do
       case ts of
-        bC:rest -> do
+        []    -> __IMPOSSIBLE__ -- not enough arguments
+        [_lc] -> __IMPOSSIBLE__ -- not enough arguments
+
+        lc:bC:rest -> do
           sbC <- reduceB' bC
           let tbC = unArg $ ignoreBlocking sbC
           mSigma      <- getBuiltinName' builtinSigma
@@ -72,60 +57,64 @@ prim_sqFill' = do
           mCoproduct  <- getBuiltinName' builtinCoproduct
           mpath  <- getBuiltinName' builtinPath
           mpathp <- getBuiltinName' builtinPathP
-          let tLam = Lam defaultArgInfo
-              todo = nored bC -- TODO: empty records
+          let
+            tLam = Lam defaultArgInfo
+
+            -- TODO: there are a few more ad-hoc getLevel impls that can be unified
+            getLevel :: MonadReduce m => Type -> m Term
+            getLevel b = do
+              s <- reduce $ getSort b
+              case s of
+                Type l -> pure (Level l)
+                _ -> __IMPOSSIBLE__
 
           case tbC of
 
             Pi aDom bAbs -> do
               tmSqFill <- getTerm "for SqFillPi" builtin_sqFill -- recursive!
               sqFillPi <- getTerm "for SqFillPi" builtinSqFillPi
-              let
-                bA = pure $ unEl (unDom aDom)
-                bB = pure . tLam $ unEl <$> bAbs -- λ a. B a
-                sqFillB = pure . tLam $ apply1 tmSqFill <$> unEl <$> bAbs -- λ a . primSqFill (B a)
-              ret <- pure sqFillPi <@> bA <@> bB <@> sqFillB
-              let ret' = ret `apply` rest
-              redReturn ret'
+              let bA = pure . unEl $ unDom aDom
+                  bB = pure $ Lam defaultArgInfo (unEl <$> bAbs) -- λ a. B a
+                  lA = getLevel $ unDom aDom
+              lB <- getLevel $ unAbs bAbs
+              let bAbsHidden = Arg (setHiding Hidden defaultArgInfo) lB
+                  ba = apply tmSqFill [bAbsHidden, defaultArg (unEl $ unAbs bAbs)]
+                  sqFillB = pure $ Lam defaultArgInfo $ bAbs {unAbs = ba} -- λ a . primSqFill (B a)
+              ret <- pure sqFillPi <#> lA <#> pure lB <@> bA <@> bB <@> sqFillB
+              redReturn $ ret `apply` rest
 
-            Def q [Apply _la, Apply _lb, Apply bA, Apply bB]
-              | Just q == mSigma -> do
-                -- reportSDoc "cubical.prim.uip" 40 $ "Sigma levels:" <+> pshow (unArg la) <+> pshow (unArg lb)
-                -- reportSDoc "cubical.prim.uip" 40 $ "Sigma A B is" <+> prettyTCM tbC
-                -- reportSDoc "cubical.prim.uip" 60 $ "in Sigma A B, A is" <+> pshow (unArg bA)
-                -- reportSDoc "cubical.prim.uip" 40 $ "in Sigma A B, A is" <+> prettyTCM (unArg bA)
-                -- reportSDoc "cubical.prim.uip" 60 $ "in Sigma A B, B is" <+> pshow (unArg bB)
-                -- reportSDoc "cubical.prim.uip" 40 $ "in Sigma A B, B is" <+> prettyTCM (unArg bB)
-                -- ctx <- getContextTelescope
-                -- reportSDoc "cubical.prim.uip" 40 $ "context is" <+> pshow ctx
-                -- reportSDoc "cubical.prim.uip" 40 $ "context is" <+> prettyTCM ctx
-                tmSqFill    <- getTerm "for SqFillSigma" builtin_sqFill -- recursive!
-                bB <- unArg <$> reduce bB
-                ret <- case isNonDep bB of
-                      Nothing -> do
-                        let sqFillA :: Term = apply tmSqFill [bA]
-                        sqFillSigma <- getTerm "for SqFillSigma" builtinSqFillSigma
-                        sqFillB <- runNamesT [] $ ( do
-                          bB' <- open bB
-                          sf <- open tmSqFill
-                          lam "a" $ \a -> sf <@> (bB' <@> a))
-                        return $ apply sqFillSigma [bA, defaultArg sqFillA, defaultArg bB, defaultArg sqFillB]
+            -- Sigma
+            Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mSigma -> do
+              tmSqFill <- getTerm "for SqFillSigma" builtin_sqFill -- recursive!
+              sqFillSigma <- getTerm "for SqFillSigma" builtinSqFillSigma
 
-                      Just bB -> sqFillProduct bA (defaultArg bB)
-                redReturn $ ret `apply` rest
+              bB <- unArg <$> reduce bB
+              let sqFillA = apply tmSqFill [la, bA]
+              sqFillB <- runNamesT [] $ do
+                          let sf = cl' tmSqFill
+                              bB' = cl' bB
+                          lam "a" $ \ a -> sf <#> pure (unArg lb) <@> (bB' <@> a)
+              let ret = apply sqFillSigma [la, lb, bA, defaultArg sqFillA, defaultArg bB, defaultArg sqFillB]
+              redReturn $ ret `apply` rest
 
-              | Just q == mProduct -> do
-                ret <- sqFillProduct bA bB
-                redReturn $ ret `apply` rest
+            -- TODO: pdt and copdt can be unified in impl
+            -- Product
+            Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mProduct -> do
+              tmSqFill      <- getTerm "for SqFillProduct" builtin_sqFill -- recursive!
+              sqFillProduct <- getTerm "for SqFillProduct" builtinSqFillProduct
+              let sqFillA = apply tmSqFill [la, bA]
+                  sqFillB = apply tmSqFill [lb, bB]
+                  ret = apply sqFillProduct [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
+              redReturn $ ret `apply` rest
 
-              | Just q == mCoproduct -> do
-                tmSqFill    <- getTerm "for SqFillCoproduct" builtin_sqFill -- recursive!
-                sqFillCoproduct <- getTerm "for SqFillCoproduct" builtinSqFillCoproduct
-                let
-                  sqFillA = apply tmSqFill [bA]
-                  sqFillB = apply tmSqFill [bB]
-                  ret = apply sqFillCoproduct [bA, defaultArg sqFillA, bB, defaultArg sqFillB]
-                redReturn $ ret `apply` rest
+            -- Coproduct
+            Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mCoproduct -> do
+              tmSqFill    <- getTerm "for SqFillCoproduct" builtin_sqFill -- recursive!
+              sqFillCoproduct <- getTerm "for SqFillCoproduct" builtinSqFillCoproduct
+              let sqFillA = apply tmSqFill [la, bA]
+                  sqFillB = apply tmSqFill [lb, bB]
+                  ret = apply sqFillCoproduct [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
+              redReturn $ ret `apply` rest
 
             Def q []
               | Just q == mUnit -> do
@@ -143,25 +132,33 @@ prim_sqFill' = do
                 sqFillNat <- getTerm "for SqFillNat" builtinSqFillNat
                 redReturn $ sqFillNat `apply` rest
 
-            Def q [Apply _la, Apply bA]
+            -- List
+            -- YJ : the required signature for list is @Set -> Set@, and can be prefixed by any number of implicit
+            -- arguments that can probably (CHECK) only be levels, so @{l} -> Set l -> Set l@ and
+            -- @{a b} -> Set a -> Set (lmax a b)@ etc are accepted.
+            -- Instead of getting level from any hidden argument, we use the constraint that the domain and codomain
+            -- must have the same level and take the level from the parameter @A : Type@ of the list.
+            -- [TODO] 1. find the first explicit argument 2. extract the level from it 
+            Def q [Apply la, Apply bA]
               | Just q == mList -> do
-                reportSDoc "cubical.prim.uip" 40 $ "we are getting List type" <+> prettyTCM tbC
-                tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
-                sqFillList <- getTerm "for SqFillList" builtinSqFillList
-                let sqFillA :: Term = apply tmSqFill [bA]
-                redReturn $ apply sqFillList ([bA, defaultArg sqFillA] ++ rest)
+                  reportSDoc "cubical.prim.uip" 40 $ "we are getting List type" <+> prettyTCM tbC
+                  tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
+                  sqFillList <- getTerm "for SqFillList" builtinSqFillList
+                  let sqFillA = apply tmSqFill [la, bA]
+                  redReturn $ apply sqFillList ([la, bA, defaultArg sqFillA] ++ rest)
 
+            -- [TODO] YJ: Same applies for Maybe.
+            Def q [Apply la, Apply bA]
               | Just q == mMaybe -> do
-                reportSDoc "cubical.prim.uip" 40 $ "we are getting Maybe type" <+> prettyTCM tbC
-                tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
-                sqFillMaybe <- getTerm "for SqFillMaybe" builtinSqFillMaybe
-                let sqFillA :: Term = apply tmSqFill [bA]
-                redReturn $ apply sqFillMaybe ([bA, defaultArg sqFillA] ++ rest)
+                  reportSDoc "cubical.prim.uip" 40 $ "we are getting Maybe type" <+> prettyTCM tbC
+                  tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
+                  sqFillMaybe <- getTerm "for SqFillMaybe" builtinSqFillMaybe
+                  let sqFillA = apply tmSqFill [la, bA]
+                  redReturn $ apply sqFillMaybe ([la, bA, defaultArg sqFillA] ++ rest)
 
-            -- Level _la is ignored; prim^sqFill only applies at level 0 (A : Type).
             -- Note: reducing bC always unfolds _≡_ to PathP, so the Just path' == mpath
             -- guard is never fired in practice; the isNonDep check handles non-dep paths.
-            Def path' [Apply _la, Apply bP, Apply x, Apply y]
+            Def path' [Apply l, Apply bP, Apply x, Apply y]
               | Just path' == mpath || isJust (isNonDep (unArg bP)) -> do
                 reportSDoc "cubical.prim.uip" 40 $ "we are getting path type" <+> prettyTCM tbC
                 tmSqFill    <- getTerm "for SqFillPath" builtin_sqFill -- recursive!
@@ -169,8 +166,8 @@ prim_sqFill' = do
                 iZero <- getTerm "for SqFillPathP" builtinIZero
                 let
                   bA = (unArg bP) `apply` [defaultArg iZero]
-                  sqFillA :: Term = apply tmSqFill [defaultArg bA]
-                redReturn $ sqFillPath `apply` [defaultArg bA, x, y, defaultArg sqFillA]
+                  sqFillA :: Term = apply tmSqFill [l, defaultArg bA]
+                redReturn $ sqFillPath `apply` [l, defaultArg bA, x, y, defaultArg sqFillA]
 
               | Just path' == mpathp -> do
                 reportSDoc "cubical.prim.uip" 40 $ "we are getting pathp type" <+> prettyTCM tbC
@@ -181,25 +178,61 @@ prim_sqFill' = do
                 let
                   bA = (unArg bP) `apply` [defaultArg iZero]
                   bB = (unArg bP) `apply` [defaultArg iOne]
-                  sqFillA :: Term = apply tmSqFill [defaultArg bA]
-                redReturn $ sqFillPathP `apply` [defaultArg bA, defaultArg bB, x, y, bP, defaultArg sqFillA]
+                  sqFillA :: Term = apply tmSqFill [l, defaultArg bA]
+                redReturn $ sqFillPathP `apply` [l, defaultArg bA, defaultArg bB, x, y, bP, defaultArg sqFillA]
 
-            Def q _ -> do
-              reportSDoc "cubical.prim.uip" 40 $ "we are getting unmatched def type" <+> prettyTCM tbC
-              reportSDoc "cubical.prim.uip" 40 $ "the qname is" <+> prettyTCM q
-              reportSDoc "cubical.prim.uip" 40 $ "the list qname is" <+> prettyTCM mList
-              reportSDoc "cubical.prim.uip" 60 $ "the givn qname is" <+> pshow q
-              reportSDoc "cubical.prim.uip" 60 $ "the list qname is" <+> pshow (fromJust mList)
-              nored bC
+            -- Records
+            -- Processing a record type as a nested sigma type:
+            -- 1. given Record type R, translate its telescope to a sigma type.
+            --    HS[TelToSigma : Telescope -> Term]
+            -- 2. apply sqFill on the Sigma type and we get a term 
+            --    Agda[surrogate : Square (TeltoSigma R) -> I -> I -> (TeltoSigma R)]
+            -- 3. we return a term 
+            --    [Square R -> I -> I -> R] defined as
+            --    λ l r u d    i    j    .elim -> surrogate (nest l) .. (nest d) i j .(elimToProj)
+            --    where 
+            --      Agda[nest : Term -> Term]
+            Def q es -> do
+              let 
+                telListToSigma :: (HasBuiltins m) => [Dom (ArgName, Term)] -> m Term
+                telListToSigma [] = __IMPOSSIBLE__ -- [TODO] YJ: empty record, isom to unit
+                telListToSigma (a:rest) = 
+                  foldl (\acc ty -> primSigma <@> acc <@> (pure $ snd $ unDom ty)) (pure $ snd $ unDom a) rest
+                -- -- [TODO] the other side is faster?
+                -- telListToSigma (a:b:rest) = do 
+                --   r <- telListToSigma (b:rest)
+                --   primSigma <@> pure (snd a) <@> r
 
+              info <- getConstInfo q
+              let
+                lam_i = Lam defaultArgInfo . Abs "i"
+
+                -- Let's just address the bare minimum: 
+                -- noeta, copattern matching records, applied to eliminator.
+                doR r@Record{recEtaEquality' = eta} = case theEtaEquality eta of
+                  NoEta CopatternMatching -> nelims > 0
+                  _ -> False
+                doR _ = False
+
+              -- Record and data types have their own implementations of
+              -- the Kan operations, which get generated as part of their
+              -- definition.
+              case theDef info of
+                  nored lc sbC
+
+            -- FIXME: sort will fall here!
+            Sort _ -> do
+              nored lc sbC
+
+            --
             t -> do
               reportSDoc "cubical.prim.uip" 40 $ "we are getting type" <+> prettyTCM tbC
-              reportSDoc "cubical.prim.uip" 60 $ "internal representation:" <+> pshow tbC
-              nored bC
+              reportSDoc "cubical.prim.uip" 60 $ "internal representation:" <+> pretty tbC
+              nored lc sbC
 
-        [] -> __IMPOSSIBLE__ -- not enough arguments
       where
-        nored t = return $ NoReduction [notReduced t]
+        -- Must return all arity (= 2) arguments, see reducePrimitive.
+        nored lc sbC = return $ NoReduction [notReduced lc, reduced sbC]
 
 
 -- -- Only for Type.
