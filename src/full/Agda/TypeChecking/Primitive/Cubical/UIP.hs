@@ -180,50 +180,50 @@ prim_sqFill' = do
                   sqFillA :: Term = apply tmSqFill [l, defaultArg bA]
                 redReturn $ sqFillPathP `apply` [l, defaultArg bA, defaultArg bB, x, y, bP, defaultArg sqFillA]
 
-            -- record types
-            Def qname elims -> do
-              constInfo <- getConstInfo qname
-              let
-                lam_i = Lam defaultArgInfo . Abs "i"
+            -- -- record types
+            -- Def qname elims -> do
+            --   constInfo <- getConstInfo qname
+            --   let
+            --     lam_i = Lam defaultArgInfo . Abs "i"
 
-                -- When should Kan operations on a record value reduce?
-                doR r@Record{recEtaEquality' = eta} = case theEtaEquality eta of
-                  -- If it's a no-eta, pattern-matching record, then the
-                  -- Kan operations behave as they do for data types; Only
-                  -- reduce when the base is a constructor
-                  -- YJ: u0 is not reduced. Can/should we reduce it first?
-                  NoEta PatternMatching -> case unArg u0 of
-                    Con{} -> True
-                    _ -> False
-                  -- For every other case, we can reduce into a value
-                  -- defined by copatterns; However, this would expose the
-                  -- internal name of transp/hcomp when printed, so hold
-                  -- off until there are projections.
-                  -- YJ: what about eta, pattern-matching?
-                  _ -> nelims > 6
-                doR _ = False
+            --     -- When should Kan operations on a record value reduce?
+            --     doR r@Record{recEtaEquality' = eta} = case theEtaEquality eta of
+            --       -- If it's a no-eta, pattern-matching record, then the
+            --       -- Kan operations behave as they do for data types; Only
+            --       -- reduce when the base is a constructor
+            --       -- YJ: u0 is not reduced. Can/should we reduce it first?
+            --       NoEta PatternMatching -> case unArg u0 of
+            --         Con{} -> True
+            --         _ -> False
+            --       -- For every other case, we can reduce into a value
+            --       -- defined by copatterns; However, this would expose the
+            --       -- internal name of transp/hcomp when printed, so hold
+            --       -- off until there are projections.
+            --       -- YJ: what about eta, pattern-matching?
+            --       _ -> nelims > 6
+            --     doR _ = False
 
-              -- Record and data types have their own implementations of
-              -- the Kan operations, which get generated as part of their
-              -- definition.
-              case theDef info of
-                  -- Records know how to hcomp themselves:
-                  | doR r, Just as <- allApplyElims es, Just hCompR <- nameOfHComp kit ->
-                    redReturn $ Def hCompR [] `apply` (as ++ [ignoreBlocking sphi, fromMaybe __IMPOSSIBLE__ u,u0])
+            --   -- Record and data types have their own implementations of
+            --   -- the Kan operations, which get generated as part of their
+            --   -- definition.
+            --   case theDef info of
+            --       -- Records know how to hcomp themselves:
+            --       | doR r, Just as <- allApplyElims es, Just hCompR <- nameOfHComp kit ->
+            --         redReturn $ Def hCompR [] `apply` (as ++ [ignoreBlocking sphi, fromMaybe __IMPOSSIBLE__ u,u0])
 
-                  -- If this is a record with no fields, then compData
-                  -- will know what to do with it:
-                  | Just as <- allApplyElims es, [] <- recFields r ->
-                    compData Nothing False (recPars r) cmd l (as <$ t) sbA sphi u u0
+            --       -- If this is a record with no fields, then compData
+            --       -- will know what to do with it:
+            --       | Just as <- allApplyElims es, [] <- recFields r ->
+            --         compData Nothing False (recPars r) cmd l (as <$ t) sbA sphi u u0
 
-                -- For data types, if this data type is indexed and/or a
-                -- higher inductive type, then hcomp is normal; But
-                -- compData knows what to do for the general cases.
-                Datatype{dataPars = pars, dataIxs = ixs, dataPathCons = pcons, dataTransp = mtrD}
-                  | and [null pcons && ixs == 0 | DoHComp  <- [cmd]], Just as <- allApplyElims es ->
-                    compData mtrD (not (null pcons) || ixs > 0) (pars + ixs) cmd l (as <$ t) sbA sphi u u0
+            --     -- For data types, if this data type is indexed and/or a
+            --     -- higher inductive type, then hcomp is normal; But
+            --     -- compData knows what to do for the general cases.
+            --     Datatype{dataPars = pars, dataIxs = ixs, dataPathCons = pcons, dataTransp = mtrD}
+            --       | and [null pcons && ixs == 0 | DoHComp  <- [cmd]], Just as <- allApplyElims es ->
+            --         compData mtrD (not (null pcons) || ixs > 0) (pars + ixs) cmd l (as <$ t) sbA sphi u u0
 
-                _          -> fallback
+            --     _          -> fallback
 
             Def q _ -> do
               reportSDoc "cubical.prim.uip" 40 $ "we are getting unmatched def type" <+> prettyTCM tbC
