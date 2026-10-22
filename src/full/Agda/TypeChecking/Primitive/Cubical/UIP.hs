@@ -82,28 +82,31 @@ prim_sqFill' = do
               ret <- pure sqFillPi <#> lA <#> pure lB <@> bA <@> bB <@> sqFillB
               redReturn $ ret `apply` rest
 
+            -- TODO: pdt and copdt can be unified in impl
+            -- Product
+            -- Note: reducing bC always unfolds _×_ to Σ A (λ _ → B), so the Just q == mProduct
+            -- guard is never fired in practice; the isNonDep check handles non-dep sigmas.
+            Def q [Apply la, Apply lb, Apply bA, Apply bB']
+              | Just q == mProduct || (Just q == mSigma && isJust (isNonDep (unArg bB'))) -> do
+              tmSqFill      <- getTerm "for SqFillProduct" builtin_sqFill -- recursive!
+              sqFillProduct <- getTerm "for SqFillProduct" builtinSqFillProduct
+              let bB = maybe bB' (<$ bB') (isNonDep (unArg bB'))
+                  sqFillA = apply tmSqFill [la, bA]
+                  sqFillB = apply tmSqFill [lb, bB]
+                  ret = apply sqFillProduct [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
+              redReturn $ ret `apply` rest
+
             -- Sigma
             Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mSigma -> do
               tmSqFill <- getTerm "for SqFillSigma" builtin_sqFill -- recursive!
               sqFillSigma <- getTerm "for SqFillSigma" builtinSqFillSigma
-
-              bB <- unArg <$> reduce bB
               let sqFillA = apply tmSqFill [la, bA]
               sqFillB <- runNamesT [] $ do
-                          let sf = cl' tmSqFill
-                              bB' = cl' bB
-                          lam "a" $ \ a -> sf <#> pure (unArg lb) <@> (bB' <@> a)
-              let ret = apply sqFillSigma [la, lb, bA, defaultArg sqFillA, defaultArg bB, defaultArg sqFillB]
-              redReturn $ ret `apply` rest
-
-            -- TODO: pdt and copdt can be unified in impl
-            -- Product
-            Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mProduct -> do
-              tmSqFill      <- getTerm "for SqFillProduct" builtin_sqFill -- recursive!
-              sqFillProduct <- getTerm "for SqFillProduct" builtinSqFillProduct
-              let sqFillA = apply tmSqFill [la, bA]
-                  sqFillB = apply tmSqFill [lb, bB]
-                  ret = apply sqFillProduct [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
+                lb' <- open (unArg lb)
+                bB' <- open (unArg bB)
+                lam "a" \a -> pure tmSqFill <#> lb' <@> (bB' <@> a) -- λ a . primSqFill (B a)
+              getContextTelescope >>= \t -> reportSDoc "cubical.prim.uip" 40 $ "context is" <+> prettyTCM t
+              let ret = apply sqFillSigma [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
               redReturn $ ret `apply` rest
 
             -- Coproduct
@@ -193,66 +196,62 @@ prim_sqFill' = do
             --      Agda[nest : Term -> Term]
             Def q es -> do
               reportSDoc "cubical.prim.uip" 40 $ "we have a record" <+> prettyTCM tbC
-              let 
-                -- Input: A telescope list (usually by [telToList $ telFields R]) of a record type R
-                -- Output: 
-                --    Its corresponding left-assoc sigma type. 
-                -- eg: [Record {A B C} -> Σ (Σ A B) C]
-                telListToSigma :: (MonadTCError m, HasBuiltins m) => [Dom (ArgName, Term)] -> m Term
-                telListToSigma [] = __IMPOSSIBLE__ -- [TODO] YJ: empty record, isom to unit
-                telListToSigma (a:rest) = 
-                  foldl (\acc ty -> primSigma <@> acc <@> (pure $ snd $ unDom ty)) 
-                        (pure $ snd $ unDom a) rest
-
-                -- Input: 
-                --    a record of type R 
-                -- Output: 
-                --    its nested pair representation (left-assoc), of type [telListToSigma (telToList $ telFields R)
-                -- Eg: recordCon {a b c} -> ((a, b) , c)
-                nest :: (MonadTCError m, HasBuiltins m) 
-                  => [QName] -- fields
-                  -> Term  -- record term
-                  -> m Term  -- sigma term
-                nest fields r = do
-                  let primPair = getBuiltin BuiltinSigmaCon
-                      proj :: QName -> Term
-                      proj fieldName = applyE r [(Proj ProjSystem fieldName)]
-
-                  case map (pure . proj) fields of
-                    [] -> __IMPOSSIBLE__ -- [TODO] 
-                    hd:tl -> foldl (\acc field -> primPair <@> acc <@> field) hd tl
-
-                -- essentially [cong nest := λ p i → nest (p i)], 
-                --  taking a path of records to a path of sigmas
-                nestPath :: (MonadTCError m, HasBuiltins m) => [QName] -> Term -> m Term
-                nestPath fields recordPath = runNamesT [] $ do 
-                  lam "i" $ \i -> do 
-                    p' <- open recordPath
-                    body <- p' <@> i
-                    ret <- nest fields body
-                    return ret
-
               info <- getConstInfo q
-              let
-                -- Let's just address the bare minimum: 
-                -- noeta, copattern matching records, applied to eliminator.
-                isCopatternRecord r@Record{recEtaEquality' = eta} = case theEtaEquality eta of
-                  NoEta PatternMatching -> False
-                  _ -> True
-                isCopatternRecord _ = False
-
               case theDef info of
                 -- tel = params ++ telFields
-                r@Record{recFields = fields, recTel = tel} | isCopatternRecord r -> do
-                  -- isNoEtaRecord r, Just as <- allApplyElims es -> -- [TODO] do we need to apply elim?
-                  reportSDoc "cubical.prim.uip" 40 $ "we have a record" <+> prettyTCM tbC
-                  reportSDoc "cubical.prim.uip" 40 $ "there are" <+> prettyTCM (length fields) <+> "fields"
-                  reportSDoc "cubical.prim.uip" 40 $ "the fields are" <+> prettyTCM (map unDom fields)
-                  reportSDoc "cubical.prim.uip" 40 $ "the tel is" <+> prettyTCM tel
-                  let telList = map unDom (telToList tel)
-                  reportSDoc "cubical.prim.uip" 40 $ "the telList has length" <+> prettyTCM (length telList)
-                  reportSDoc "cubical.prim.uip" 40 $ "the telList is" <+> prettyTCM telList
-                  nored lc sbC
+                r@Record{recFields = fields, recTel = tel, recEtaEquality' = eta} 
+                  -- [TODO] think about pattern matching records
+                  | not (NoEta PatternMatching == theEtaEquality eta), Just as <- allApplyElims es -> do 
+                  -- reportSDoc "cubical.prim.uip" 40 $ "we have a record" <+> prettyTCM tbC
+                  -- reportSDoc "cubical.prim.uip" 40 $ "there are" <+> prettyTCM (length fields) <+> "fields"
+                  -- reportSDoc "cubical.prim.uip" 40 $ "the fields are" <+> prettyTCM (map unDom fields)
+                  -- reportSDoc "cubical.prim.uip" 40 $ "the tel is" <+> prettyTCM tel
+                  -- let telList = map unDom (telToList tel)
+                  -- reportSDoc "cubical.prim.uip" 40 $ "the telList has length" <+> prettyTCM (length telList)
+                  -- reportSDoc "cubical.prim.uip" 40 $ "the telList is" <+> prettyTCM telList
+                    -- [TODO] we assume no params first, so fields and tel have the same length
+                    -- 1. get sigma
+                    sigmaRecord <- telListToSigma (telToList $ (fmap . fmap) tel)
+                    -- 2. get sqfill on it
+                    surrogate <- runNamesT [] $ do
+                      tmSqFill <#> _ <@> sigmaRecord
+                    -- 3. return the eta
+                    nored lc sbC
+                    where
+                      -- Input: A telescope list (usually by [telToList $ telFields R]) of a record type R
+                      -- Output: Its corresponding left-assoc sigma type. 
+                      -- eg: [Record {A B C} -> Σ (Σ A B) C]
+                      telListToSigma :: (MonadTCError m, HasBuiltins m) => [Dom (ArgName, Type)] -> m Term
+                      telListToSigma [] = __IMPOSSIBLE__ -- [TODO] YJ: empty record, isom to unit
+                      telListToSigma (a:rest) = 
+                        foldl (\acc ty -> primSigma <#> _ <#> _ <@> acc <@> (pure $ snd $ unDom ty)) 
+                              (pure $ snd $ unDom a) rest
+
+                      -- Input: a record of type R 
+                      -- Output: its nested pair repr. (left-assoc), of type [telListToSigma (telToList $ telFields R)]
+                      -- Eg: recordCon {a b c} -> ((a, b) , c)
+                      nest :: (MonadTCError m, HasBuiltins m) 
+                        => [QName] -- fields
+                        -> Term  -- record term
+                        -> m Term  -- sigma term
+                      nest fields r = do
+                        let primPair = getBuiltin BuiltinSigmaCon
+                            proj fieldName = applyE r [(Proj ProjSystem fieldName)]
+
+                        case map (pure . proj) fields of
+                          [] -> __IMPOSSIBLE__ -- [TODO] 
+                          hd:tl -> foldl (\acc field -> primPair <@> acc <@> field) hd tl
+
+                      -- essentially [cong nest := λ p i → nest (p i)], 
+                      --  taking a path of records to a path of sigmas
+                      nestPath :: (MonadTCError m, HasBuiltins m) => [QName] -> Term -> m Term
+                      nestPath fields recordPath = runNamesT [] $ do 
+                        lam "i" $ \i -> do 
+                          p' <- open recordPath
+                          body <- p' <@> i
+                          ret <- nest fields body
+                          return ret
+
 
                 r@Record{recEtaEquality' = eta} -> do
                   reportSDoc "cubical.prim.uip" 40 $ pshow eta
