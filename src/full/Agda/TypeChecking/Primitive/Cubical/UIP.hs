@@ -16,7 +16,6 @@ import Agda.TypeChecking.Substitute
 
 import Agda.Utils.Impossible
 import Agda.TypeChecking.SizedTypes.Utils (debug)
-import Agda.Syntax.Common.Pretty (Pretty(pretty))
 import Agda.TypeChecking.Pretty
 import Agda.TypeChecking.Warnings (warning)
 import Agda.TypeChecking.Free (freeIn)
@@ -193,31 +192,75 @@ prim_sqFill' = do
             --    where 
             --      Agda[nest : Term -> Term]
             Def q es -> do
+              reportSDoc "cubical.prim.uip" 40 $ "we have a record" <+> prettyTCM tbC
               let 
-                telListToSigma :: (HasBuiltins m) => [Dom (ArgName, Term)] -> m Term
+                -- Input: A telescope list (usually by [telToList $ telFields R]) of a record type R
+                -- Output: 
+                --    Its corresponding left-assoc sigma type. 
+                -- eg: [Record {A B C} -> Σ (Σ A B) C]
+                telListToSigma :: (MonadTCError m, HasBuiltins m) => [Dom (ArgName, Term)] -> m Term
                 telListToSigma [] = __IMPOSSIBLE__ -- [TODO] YJ: empty record, isom to unit
                 telListToSigma (a:rest) = 
-                  foldl (\acc ty -> primSigma <@> acc <@> (pure $ snd $ unDom ty)) (pure $ snd $ unDom a) rest
-                -- -- [TODO] the other side is faster?
-                -- telListToSigma (a:b:rest) = do 
-                --   r <- telListToSigma (b:rest)
-                --   primSigma <@> pure (snd a) <@> r
+                  foldl (\acc ty -> primSigma <@> acc <@> (pure $ snd $ unDom ty)) 
+                        (pure $ snd $ unDom a) rest
+
+                -- Input: 
+                --    a record of type R 
+                -- Output: 
+                --    its nested pair representation (left-assoc), of type [telListToSigma (telToList $ telFields R)
+                -- Eg: recordCon {a b c} -> ((a, b) , c)
+                nest :: (MonadTCError m, HasBuiltins m) 
+                  => [QName] -- fields
+                  -> Term  -- record term
+                  -> m Term  -- sigma term
+                nest fields r = do
+                  let primPair = getBuiltin BuiltinSigmaCon
+                      proj :: QName -> Term
+                      proj fieldName = applyE r [(Proj ProjSystem fieldName)]
+
+                  case map (pure . proj) fields of
+                    [] -> __IMPOSSIBLE__ -- [TODO] 
+                    hd:tl -> foldl (\acc field -> primPair <@> acc <@> field) hd tl
+
+                -- essentially [cong nest := λ p i → nest (p i)], 
+                --  taking a path of records to a path of sigmas
+                nestPath :: (MonadTCError m, HasBuiltins m) => [QName] -> Term -> m Term
+                nestPath fields recordPath = runNamesT [] $ do 
+                  lam "i" $ \i -> do 
+                    p' <- open recordPath
+                    body <- p' <@> i
+                    ret <- nest fields body
+                    return ret
 
               info <- getConstInfo q
               let
-                lam_i = Lam defaultArgInfo . Abs "i"
-
                 -- Let's just address the bare minimum: 
                 -- noeta, copattern matching records, applied to eliminator.
-                doR r@Record{recEtaEquality' = eta} = case theEtaEquality eta of
-                  NoEta CopatternMatching -> nelims > 0
-                  _ -> False
-                doR _ = False
+                isCopatternRecord r@Record{recEtaEquality' = eta} = case theEtaEquality eta of
+                  NoEta PatternMatching -> False
+                  _ -> True
+                isCopatternRecord _ = False
 
-              -- Record and data types have their own implementations of
-              -- the Kan operations, which get generated as part of their
-              -- definition.
               case theDef info of
+                -- tel = params ++ telFields
+                r@Record{recFields = fields, recTel = tel} | isCopatternRecord r -> do
+                  -- isNoEtaRecord r, Just as <- allApplyElims es -> -- [TODO] do we need to apply elim?
+                  reportSDoc "cubical.prim.uip" 40 $ "we have a record" <+> prettyTCM tbC
+                  reportSDoc "cubical.prim.uip" 40 $ "there are" <+> prettyTCM (length fields) <+> "fields"
+                  reportSDoc "cubical.prim.uip" 40 $ "the fields are" <+> prettyTCM (map unDom fields)
+                  reportSDoc "cubical.prim.uip" 40 $ "the tel is" <+> prettyTCM tel
+                  let telList = map unDom (telToList tel)
+                  reportSDoc "cubical.prim.uip" 40 $ "the telList has length" <+> prettyTCM (length telList)
+                  reportSDoc "cubical.prim.uip" 40 $ "the telList is" <+> prettyTCM telList
+                  nored lc sbC
+
+                r@Record{recEtaEquality' = eta} -> do
+                  reportSDoc "cubical.prim.uip" 40 $ pshow eta
+                  nored lc sbC
+                  
+                _ -> do
+                  reportSDoc "cubical.prim.uip" 40 $ "we are getting unmatched def type" <+> prettyTCM tbC
+                  reportSDoc "cubical.prim.uip" 40 $ "the qname is" <+> prettyTCM q
                   nored lc sbC
 
             -- FIXME: sort will fall here!
