@@ -8,7 +8,7 @@ module _ (A B : Type) where
   p : SqFill (A → B)
   p = prim^sqFill (A → B)
 
-  q = SqFillPi _ (λ _ → B) (λ _ → sqFill B)
+  q = SqFillPi A (λ _ → B) (λ _ → sqFill B)
 
   check : (λ {lu} {ld} → p {lu} {ld}) ≡ q
   check k = p

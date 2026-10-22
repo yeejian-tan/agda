@@ -294,15 +294,17 @@ coreBuiltins =
                                                                 (const $ const $ return ()))
 
   , (builtinSqFillList                         |-> BuiltinUnknown (Just $ requireCubical CWithoutGlue >> runNamesT [] (
-                                                                      nPi' "A" tset $ \ bA ->
-                                                                      (el $ primSqFill <#> primLevelZero <@> bA) -->
-                                                                      (el $ primSqFill <#> primLevelZero <@> (primList <@> bA))))
+                                                                      hPi' "la" (el $ cl primLevel) $ \ la ->
+                                                                      nPi' "A" (sort . tmSort <$> la) $ \ bA ->
+                                                                      (el $ primSqFill <#> la <@> bA) -->
+                                                                      (el $ primSqFill <#> la <@> (cl (unappliedBuiltin builtinList) <#> la <@> bA))))
                                                                 (const $ const $ return ()))
 
   , (builtinSqFillMaybe                         |-> BuiltinUnknown (Just $ requireCubical CWithoutGlue >> runNamesT [] (
-                                                                      nPi' "A" tset $ \ bA ->
-                                                                      (el $ primSqFill <#> primLevelZero <@> bA) -->
-                                                                      (el $ primSqFill <#> primLevelZero <@> (primMaybe <@> bA))))
+                                                                      hPi' "la" (el $ cl primLevel) $ \ la ->
+                                                                      nPi' "A" (sort . tmSort <$> la) $ \ bA ->
+                                                                      (el $ primSqFill <#> la <@> bA) -->
+                                                                      (el $ primSqFill <#> la <@> (cl (unappliedBuiltin builtinMaybe) <#> la <@> bA))))
                                                                 (const $ const $ return ()))
   , (builtinSqFillPath                         |-> BuiltinUnknown (Just $ requireCubical CWithoutGlue >> runNamesT [] (
                                                                       hPi' "la" (el $ cl primLevel) $ \ la ->
@@ -550,6 +552,11 @@ coreBuiltins =
   ]
   where
         (|->) = BuiltinInfo
+
+        -- The bare definition of a builtin data type, without the arguments that were inserted
+        -- when binding it, e.g. @List@ instead of @List {lzero}@.
+        unappliedBuiltin :: BuiltinId -> TCM Term
+        unappliedBuiltin b = maybe __IMPOSSIBLE__ (`Def` []) <$> getBuiltinName' b
 
         v0 :: TCM Term
         v0 = varM 0

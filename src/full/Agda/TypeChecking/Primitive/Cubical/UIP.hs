@@ -16,11 +16,10 @@ import Agda.TypeChecking.Substitute
 
 import Agda.Utils.Impossible
 import Agda.TypeChecking.SizedTypes.Utils (debug)
-import Agda.Syntax.Common.Pretty (Pretty(pretty))
 import Agda.TypeChecking.Pretty
 import Agda.TypeChecking.Warnings (warning)
 import Agda.TypeChecking.Free (freeIn)
-import Agda.Utils.Maybe (isJust, fromJust)
+import Agda.Utils.Maybe (isJust)
 -- import Agda.TypeChecking.Level (LevelKit(lvlZero))
 
 isNonDep :: Term -> Maybe Term
@@ -41,8 +40,8 @@ prim_sqFill' = do
     -- try when applying to an inductive type.
     PrimFun __IMPOSSIBLE__ 2 [] $ \ts nelims -> do
       case ts of
-        []    -> __IMPOSSIBLE__ -- not enough arguments
-        [_lc] -> __IMPOSSIBLE__ -- not enough arguments
+        []  -> __IMPOSSIBLE__ -- not enough arguments
+        [_] -> __IMPOSSIBLE__ -- not enough arguments
 
         lc:bC:rest -> do
           sbC <- reduceB' bC
@@ -83,28 +82,31 @@ prim_sqFill' = do
               ret <- pure sqFillPi <#> lA <#> pure lB <@> bA <@> bB <@> sqFillB
               redReturn $ ret `apply` rest
 
+            -- TODO: pdt and copdt can be unified in impl
+            -- Product
+            -- Note: reducing bC always unfolds _×_ to Σ A (λ _ → B), so the Just q == mProduct
+            -- guard is never fired in practice; the isNonDep check handles non-dep sigmas.
+            Def q [Apply la, Apply lb, Apply bA, Apply bB']
+              | Just q == mProduct || (Just q == mSigma && isJust (isNonDep (unArg bB'))) -> do
+              tmSqFill      <- getTerm "for SqFillProduct" builtin_sqFill -- recursive!
+              sqFillProduct <- getTerm "for SqFillProduct" builtinSqFillProduct
+              let bB = maybe bB' (<$ bB') (isNonDep (unArg bB'))
+                  sqFillA = apply tmSqFill [la, bA]
+                  sqFillB = apply tmSqFill [lb, bB]
+                  ret = apply sqFillProduct [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
+              redReturn $ ret `apply` rest
+
             -- Sigma
             Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mSigma -> do
               tmSqFill <- getTerm "for SqFillSigma" builtin_sqFill -- recursive!
               sqFillSigma <- getTerm "for SqFillSigma" builtinSqFillSigma
-
-              bB <- unArg <$> reduce bB
               let sqFillA = apply tmSqFill [la, bA]
               sqFillB <- runNamesT [] $ do
-                          let sf = cl' tmSqFill
-                              bB' = cl' bB
-                          lam "a" $ \ a -> sf <#> pure (unArg lb) <@> (bB' <@> a)
-              let ret = apply sqFillSigma [la, lb, bA, defaultArg sqFillA, defaultArg bB, defaultArg sqFillB]
-              redReturn $ ret `apply` rest
-
-            -- TODO: pdt and copdt can be unified in impl
-            -- Product
-            Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mProduct -> do
-              tmSqFill      <- getTerm "for SqFillProduct" builtin_sqFill -- recursive!
-              sqFillProduct <- getTerm "for SqFillProduct" builtinSqFillProduct
-              let sqFillA = apply tmSqFill [la, bA]
-                  sqFillB = apply tmSqFill [lb, bB]
-                  ret = apply sqFillProduct [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
+                lb' <- open (unArg lb)
+                bB' <- open (unArg bB)
+                lam "a" \a -> pure tmSqFill <#> lb' <@> (bB' <@> a) -- λ a . primSqFill (B a)
+              getContextTelescope >>= \t -> reportSDoc "cubical.prim.uip" 40 $ "context is" <+> prettyTCM t
+              let ret = apply sqFillSigma [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
               redReturn $ ret `apply` rest
 
             -- Coproduct
@@ -193,31 +195,125 @@ prim_sqFill' = do
             --    where 
             --      Agda[nest : Term -> Term]
             Def q es -> do
-              let 
-                telListToSigma :: (HasBuiltins m) => [Dom (ArgName, Term)] -> m Term
-                telListToSigma [] = __IMPOSSIBLE__ -- [TODO] YJ: empty record, isom to unit
-                telListToSigma (a:rest) = 
-                  foldl (\acc ty -> primSigma <@> acc <@> (pure $ snd $ unDom ty)) (pure $ snd $ unDom a) rest
-                -- -- [TODO] the other side is faster?
-                -- telListToSigma (a:b:rest) = do 
-                --   r <- telListToSigma (b:rest)
-                --   primSigma <@> pure (snd a) <@> r
-
+              reportSDoc "cubical.prim.uip" 40 $ "we have a record" <+> prettyTCM tbC
               info <- getConstInfo q
-              let
-                lam_i = Lam defaultArgInfo . Abs "i"
-
-                -- Let's just address the bare minimum: 
-                -- noeta, copattern matching records, applied to eliminator.
-                doR r@Record{recEtaEquality' = eta} = case theEtaEquality eta of
-                  NoEta CopatternMatching -> nelims > 0
-                  _ -> False
-                doR _ = False
-
-              -- Record and data types have their own implementations of
-              -- the Kan operations, which get generated as part of their
-              -- definition.
               case theDef info of
+                -- tel = params ++ telFields
+                Record{recFields = fields, recTel = tel, recEtaEquality' = eta, recConHead = conR}
+                  -- [TODO] think about pattern matching records
+                  | not (NoEta PatternMatching == theEtaEquality eta), Just as <- allApplyElims es -> do
+                    -- recTel includes the parameters, instantiate them to get the field telescope.
+                    let fieldDoms = telToList $ tel `apply` as
+                    -- the constructor and projections of Σ, for nesting and for referring to
+                    -- earlier fields in the nested sigma
+                    mSigmaProjs <- case mSigma of
+                      Nothing -> pure Nothing
+                      Just sigma -> theDef <$> getConstInfo sigma >>= \case
+                        Record{recConHead = pair, recFields = [pfst, psnd]} ->
+                          pure $ Just (sigma, pair, unDom pfst, unDom psnd)
+                        _ -> __IMPOSSIBLE__
+                    case mSigmaProjs of
+                      Nothing -> nored lc sbC -- the SIGMA builtin is not bound
+                      Just (sigma, pair, pfst, psnd) -> do
+                        -- [TODO] irrelevant fields cannot be nested into a Σ
+                        mSigmaRecord <- if all isRelevant fieldDoms
+                          then telToSigma sigma pfst psnd $ map (snd . unDom) fieldDoms
+                          else pure Nothing
+                        let
+                          -- Without eta, @unnest (nest x)@ is not definitionally @x@, so the boundary
+                          -- of the square only holds after projecting: only reduce when the square
+                          -- is fully applied (to the 10 arguments of SqFill R) and then projected.
+                          canReduce = case theEtaEquality eta of
+                            YesEta                 -> True
+                            NoEta CopatternMatching -> nelims > 10
+                            NoEta PatternMatching   -> False
+
+                          -- Input: a record of type R
+                          -- Output: its nested pair repr. (left-assoc), of type [telToSigma R]
+                          -- Eg: recordCon {a b c} -> ((a, b) , c)
+                          nest :: Term -> Term
+                          nest x = foldl1 (\acc y -> Con pair ConOSystem [Apply (defaultArg acc), Apply (defaultArg y)])
+                            [ x `applyE` [Proj ProjSystem (unDom f)] | f <- fields ]
+
+                          -- Inverse of nest: a nested pair of type [telToSigma R] to a record of type R
+                          -- Eg: ((a, b) , c) -> recordCon {a b c}
+                          unnest :: Term -> Term
+                          unnest s = Con conR ConOSystem
+                            [ Apply (v <$ argFromDom d) | (d, v) <- zip fieldDoms (sigmaProjs pfst psnd (length fieldDoms) s) ]
+
+                        case mSigmaRecord of
+                          Just (sigmaRecord, lSigma) | canReduce -> do
+                            -- 2. get sqfill on it
+                            tmSqFill <- getTerm "for SqFillRecord" builtin_sqFill -- recursive!
+                            let surrogate = apply tmSqFill [hide $ defaultArg (Level lSigma), defaultArg sigmaRecord]
+                            reportSDoc "cubical.prim.uip" 40 $ "the nested sigma is" <+> prettyTCM sigmaRecord
+                            reportSDoc "cubical.prim.uip" 40 $ "the surrogate is" <+> prettyTCM surrogate
+                            -- 3. transport the square along R ≅ telToSigma R:
+                            --    λ {a₀₀ a₀₁} a₀₋ {a₁₀ a₁₁} a₁₋ a₋₀ a₋₁ i j →
+                            --      unnest (surrogate {nest a₀₀} {nest a₀₁} (λ k → nest (a₀₋ k)) … i j)
+                            ret <- runNamesT [] $ do
+                              sur <- open surrogate
+                              let hlam = glam (setHiding Hidden defaultArgInfo)
+                                  nestM = fmap nest
+                                  -- [cong nest p], taking a path of records to a path of sigmas
+                                  nestP p x y = lam "k" \k -> nestM (p <@@> (x, y, k))
+                              hlam "a₀₀" \a00 -> hlam "a₀₁" \a01 -> lam "a₀₋" \l ->
+                                hlam "a₁₀" \a10 -> hlam "a₁₁" \a11 -> lam "a₁₋" \r ->
+                                lam "a₋₀" \u -> lam "a₋₁" \d -> lam "i" \i -> lam "j" \j ->
+                                unnest <$> (sur <#> nestM a00 <#> nestM a01 <@> nestP l a00 a01
+                                                <#> nestM a10 <#> nestM a11 <@> nestP r a10 a11
+                                                <@> nestP u a00 a10 <@> nestP d a01 a11 <@> i <@> j)
+                            reportSDoc "cubical.prim.uip" 40 $ "the record square is" <+> prettyTCM ret
+                            redReturn $ ret `apply` rest
+                          _ -> nored lc sbC
+                    where
+                      -- Input: the field types of a record type R (parameters applied), where the
+                      --    k-th field type lives in the context extended with the k earlier fields.
+                      -- Output: Its corresponding left-assoc sigma type and its level, or Nothing if
+                      --    a field is not in @Type ℓ@ or its level depends on earlier fields.
+                      -- eg: [Record {a : A; b : B a; c : C a b} -> Σ (Σ A (λ p → B p)) (λ p → C (fst p) (snd p))]
+                      telToSigma :: QName -> QName -> QName -> [Type] -> ReduceM (Maybe (Term, Level))
+                      telToSigma _ _ _ [] = pure Nothing -- [TODO] YJ: empty record, isom to unit
+                      telToSigma sigma pfst psnd (t0 : ts) = fieldLevel 0 t0 >>= \case
+                        Nothing -> pure Nothing
+                        Just l0 -> go 1 (unEl t0) l0 ts
+                        where
+                          -- @acc : Type lAcc@ is the nested sigma of the first k fields
+                          go :: Int -> Term -> Level -> [Type] -> ReduceM (Maybe (Term, Level))
+                          go _ acc lAcc [] = pure $ Just (acc, lAcc)
+                          go k acc lAcc (t : ts') = fieldLevel k t >>= \case
+                            Nothing -> pure Nothing
+                            Just l -> do
+                              let -- Γ, p ⊢ σ : Γ, x₀ … xₖ₋₁, replacing the earlier fields by projections of p
+                                  σ    = foldr (:#) (raiseS 1) $ reverse $ sigmaProjs pfst psnd k (var 0)
+                                  bB   = Lam defaultArgInfo $ Abs "p" $ applySubst σ (unEl t)
+                                  acc' = Def sigma $ map Apply
+                                    [ hide $ defaultArg (Level lAcc), hide $ defaultArg (Level l)
+                                    , defaultArg acc, defaultArg bB ]
+                              go (k + 1) acc' (levelLub lAcc l) ts'
+
+                      -- the k fields x₀ … xₖ₋₁ of p : Σ (… (Σ X₀ X₁) …) Xₖ₋₁
+                      sigmaProjs :: QName -> QName -> Int -> Term -> [Term]
+                      sigmaProjs pfst psnd k p
+                        | k <= 1    = [p]
+                        | otherwise = sigmaProjs pfst psnd (k - 1) (p `applyE` [Proj ProjSystem pfst])
+                                      ++ [p `applyE` [Proj ProjSystem psnd]]
+
+                      -- the level of the k-th field type, strengthened past the k earlier fields
+                      fieldLevel :: Int -> Type -> ReduceM (Maybe Level)
+                      fieldLevel k t = reduce (getSort t) >>= \case
+                        Type l | not (any (`freeIn` l) [0 .. k - 1]) ->
+                          pure $ Just $ applySubst (strengthenS impossible k) l
+                        _ -> pure Nothing
+
+
+                r@Record{recEtaEquality' = eta} -> do
+                  reportSDoc "cubical.prim.uip" 40 $ pshow eta
+                  nored lc sbC
+                  
+                _ -> do
+                  reportSDoc "cubical.prim.uip" 40 $ "we are getting unmatched def type" <+> prettyTCM tbC
+                  reportSDoc "cubical.prim.uip" 40 $ "the qname is" <+> prettyTCM q
                   nored lc sbC
 
             -- FIXME: sort will fall here!
