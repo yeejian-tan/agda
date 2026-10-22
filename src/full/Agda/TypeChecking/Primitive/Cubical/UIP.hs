@@ -44,7 +44,7 @@ prim_sqFill' = do
         []    -> __IMPOSSIBLE__ -- not enough arguments
         [_lc] -> __IMPOSSIBLE__ -- not enough arguments
 
-        _lc:bC:rest -> do
+        lc:bC:rest -> do
           sbC <- reduceB' bC
           let tbC = unArg $ ignoreBlocking sbC
           mSigma      <- getBuiltinName' builtinSigma
@@ -75,11 +75,11 @@ prim_sqFill' = do
               sqFillPi <- getTerm "for SqFillPi" builtinSqFillPi
               let bA = pure . unEl $ unDom aDom
                   bB = pure $ Lam defaultArgInfo (unEl <$> bAbs) -- λ a. B a
-                  Abs absNameB unAbsB = bAbs
                   lA = getLevel $ unDom aDom
               lB <- getLevel $ unAbs bAbs
               let bAbsHidden = Arg (setHiding Hidden defaultArgInfo) lB
-                  sqFillB = pure $ Lam defaultArgInfo $ Abs absNameB $ apply tmSqFill [bAbsHidden, defaultArg (unEl unAbsB)] -- λ a . primSqFill (B a)
+                  ba = apply tmSqFill [bAbsHidden, defaultArg (unEl $ unAbs bAbs)]
+                  sqFillB = pure $ Lam defaultArgInfo $ bAbs {unAbs = ba} -- λ a . primSqFill (B a)
               ret <- pure sqFillPi <#> lA <#> pure lB <@> bA <@> bB <@> sqFillB
               redReturn $ ret `apply` rest
 
@@ -138,22 +138,23 @@ prim_sqFill' = do
             -- @{a b} -> Set a -> Set (lmax a b)@ etc are accepted.
             -- Instead of getting level from any hidden argument, we use the constraint that the domain and codomain
             -- must have the same level and take the level from the parameter @A : Type@ of the list.
+            -- [TODO] 1. find the first explicit argument 2. extract the level from it 
             Def q [Apply la, Apply bA]
               | Just q == mList -> do
                   reportSDoc "cubical.prim.uip" 40 $ "we are getting List type" <+> prettyTCM tbC
                   tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
                   sqFillList <- getTerm "for SqFillList" builtinSqFillList
-                  sqFillA <- pure tmSqFill <@> pure (unArg bA)
-                  redReturn $ apply sqFillList ([bA, defaultArg sqFillA] ++ rest)
+                  let sqFillA = apply tmSqFill [la, bA]
+                  redReturn $ apply sqFillList ([la, bA, defaultArg sqFillA] ++ rest)
 
-            -- YJ: Same applies for Maybe.
+            -- [TODO] YJ: Same applies for Maybe.
             Def q [Apply la, Apply bA]
               | Just q == mMaybe -> do
                   reportSDoc "cubical.prim.uip" 40 $ "we are getting Maybe type" <+> prettyTCM tbC
                   tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
                   sqFillMaybe <- getTerm "for SqFillMaybe" builtinSqFillMaybe
-                  sqFillA <- pure tmSqFill <@> pure (unArg bA)
-                  redReturn $ apply sqFillMaybe ([bA, defaultArg sqFillA] ++ rest)
+                  let sqFillA = apply tmSqFill [la, bA]
+                  redReturn $ apply sqFillMaybe ([la, bA, defaultArg sqFillA] ++ rest)
 
             -- Note: reducing bC always unfolds _≡_ to PathP, so the Just path' == mpath
             -- guard is never fired in practice; the isNonDep check handles non-dep paths.
@@ -217,50 +218,21 @@ prim_sqFill' = do
               -- the Kan operations, which get generated as part of their
               -- definition.
               case theDef info of
-                r@Record{recFields = fields, recTel = tel}
-                  | doR r, Just as <- allApplyElims es, DoTransp <- cmd, Just transpR <- nameOfTransp kit ->
-                    -- Optimisation: If the record has no parameters then we can ditch the transport.
-                    if recPars r == 0
-                      then redReturn $ unArg u0
-                      else redReturn $ Def transpR [] `apply` (map (fmap lam_i) as ++ [ignoreBlocking sphi, u0])
-
-                  -- Records know how to hcomp themselves:
-                  | doR r, Just as <- allApplyElims es, DoHComp <- cmd, Just hCompR <- nameOfHComp kit ->
-                    redReturn $ Def hCompR [] `apply` (as ++ [ignoreBlocking sphi, fromMaybe __IMPOSSIBLE__ u,u0])
-
-                  -- If this is a record with no fields, then compData
-                  -- will know what to do with it:
-                  | Just as <- allApplyElims es, [] <- recFields r -> compData Nothing False (recPars r) cmd l (as <$ t) sbA sphi u u0
-
-                -- For data types, if this data type is indexed and/or a
-                -- higher inductive type, then hcomp is normal; But
-                -- compData knows what to do for the general cases.
-                Datatype{dataPars = pars, dataIxs = ixs, dataHIT = hit, dataTransp = mtrD}
-                  | and [ hit == NotHIT && ixs == 0 | DoHComp <- [cmd] ]
-                  , Just as <- allApplyElims es ->
-                    compData mtrD (hit == YesHIT || ixs > 0) (pars + ixs) cmd l (as <$ t) sbA sphi u u0
-
-
-            Def q _ -> do
-              reportSDoc "cubical.prim.uip" 40 $ "we are getting unmatched def type" <+> prettyTCM tbC
-              reportSDoc "cubical.prim.uip" 40 $ "the qname is" <+> prettyTCM q
-              reportSDoc "cubical.prim.uip" 40 $ "the list qname is" <+> prettyTCM mList
-              reportSDoc "cubical.prim.uip" 60 $ "the givn qname is" <+> pshow q
-              reportSDoc "cubical.prim.uip" 60 $ "the list qname is" <+> pshow (fromJust mList)
-              nored bC
+                  nored lc sbC
 
             -- FIXME: sort will fall here!
             Sort _ -> do
-              nored bC
+              nored lc sbC
 
             --
             t -> do
               reportSDoc "cubical.prim.uip" 40 $ "we are getting type" <+> prettyTCM tbC
-              reportSDoc "cubical.prim.uip" 60 $ "internal representation:" <+> pshow tbC
-              nored bC
+              reportSDoc "cubical.prim.uip" 60 $ "internal representation:" <+> pretty tbC
+              nored lc sbC
 
       where
-        nored t = return $ NoReduction [notReduced t]
+        -- Must return all arity (= 2) arguments, see reducePrimitive.
+        nored lc sbC = return $ NoReduction [notReduced lc, reduced sbC]
 
 
 -- -- Only for Type.
