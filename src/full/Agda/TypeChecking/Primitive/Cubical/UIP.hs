@@ -198,6 +198,18 @@ prim_sqFill' = do
               reportSDoc "cubical.prim.uip" 40 $ "we have a record" <+> prettyTCM tbC
               info <- getConstInfo q
               case theDef info of
+                -- Empty records with eta are unit types: the constant square has the right
+                -- boundary by eta, so no Σ (and no level) is needed.
+                Record{recFields = [], recConHead = conR, recEtaEquality' = eta}
+                  | YesEta <- theEtaEquality eta -> do
+                    ret <- runNamesT [] $ do
+                      let hlam = glam (setHiding Hidden defaultArgInfo)
+                      hlam "a₀₀" \_ -> hlam "a₀₁" \_ -> lam "a₀₋" \_ ->
+                        hlam "a₁₀" \_ -> hlam "a₁₁" \_ -> lam "a₁₋" \_ ->
+                        lam "a₋₀" \_ -> lam "a₋₁" \_ -> lam "i" \_ -> lam "j" \_ ->
+                        pure $ Con conR ConOSystem []
+                    redReturn $ ret `apply` rest
+
                 -- tel = params ++ telFields
                 Record{recFields = fields, recTel = tel, recEtaEquality' = eta, recConHead = conR}
                   -- [TODO] think about pattern matching records
@@ -217,7 +229,7 @@ prim_sqFill' = do
                       Just (sigma, pair, pfst, psnd) -> do
                         -- [TODO] irrelevant fields cannot be nested into a Σ
                         mSigmaRecord <- if all isRelevant fieldDoms
-                          then telToSigma sigma pfst psnd $ map (snd . unDom) fieldDoms
+                          then telListToSigma sigma pfst psnd $ map (snd . unDom) fieldDoms
                           else pure Nothing
                         let
                           -- Without eta, @unnest (nest x)@ is not definitionally @x@, so the boundary
@@ -272,9 +284,10 @@ prim_sqFill' = do
                       -- Output: Its corresponding left-assoc sigma type and its level, or Nothing if
                       --    a field is not in @Type ℓ@ or its level depends on earlier fields.
                       -- eg: [Record {a : A; b : B a; c : C a b} -> Σ (Σ A (λ p → B p)) (λ p → C (fst p) (snd p))]
-                      telToSigma :: QName -> QName -> QName -> [Type] -> ReduceM (Maybe (Term, Level))
-                      telToSigma _ _ _ [] = pure Nothing -- [TODO] YJ: empty record, isom to unit
-                      telToSigma sigma pfst psnd (t0 : ts) = fieldLevel 0 t0 >>= \case
+                      telListToSigma :: QName -> QName -> QName -> [Type] -> ReduceM (Maybe (Term, Level))
+                      -- empty records with eta are handled above; without eta they stay stuck
+                      telListToSigma _ _ _ [] = pure Nothing
+                      telListToSigma sigma pfst psnd (t0 : ts) = fieldLevel 0 t0 >>= \case
                         Nothing -> pure Nothing
                         Just l0 -> go 1 (unEl t0) l0 ts
                         where
