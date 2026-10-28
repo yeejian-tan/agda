@@ -78,10 +78,11 @@ fieldLevel k t = reduce (getSort t) >>= \case
 edgeBody :: (Term, Term, Term) -> ReduceM (Abs Term)
 edgeBody (x, y, e) = reduce $ Abs "k" $ raise 1 e `applyE` [IApply (raise 1 x) (raise 1 y) (var 0)]
 
--- | The constructor heading the edge @e : x ≡ y@ at a generic point k, with its arguments
---   under k, if the edge is constructor-headed.
-edgeCon :: (Term, Term, Term) -> ReduceM (Maybe (ConHead, Abs [Arg Term]))
-edgeCon e = edgeBody e <&> \case
+-- | The constructor heading an edge body (see 'edgeBody'), with its arguments under k, if the
+--   edge is constructor-headed. Natural number literals count as constructor-headed
+--   (@4 = suc 3@).
+edgeCon :: Abs Term -> ReduceM (Maybe (ConHead, Abs [Arg Term]))
+edgeCon b = constructorFormer <&> \conForm -> case conForm <$> b of
   Abs k (Con c _ es) | Just args <- properApplies es -> Just (c, Abs k args)
   _ -> Nothing
 
@@ -172,21 +173,15 @@ fillVia doms rebuild argsL argsR argsU argsD
 --     arguments are q's telescope. A prefix of arguments that cannot be packed into a Σ, like
 --     levels, must be constant along the edges.
 --
---   If all four edges are constant (e.g. @refl@ at a neutral type), so are the corners and the
---   square is constant.
---
 --   [TODO] Levels are required to be constant along the edges (sorts of the domain and codomain
 --   of a Π, the level of a PathP, level arguments of definitions). Levels could depend on I, but
 --   this is not supported yet: such squares are stuck.
-sqFillUniv :: [Term] -- ^ the corners and edges: a₀₀ a₀₁ a₀₋ a₁₀ a₁₁ a₁₋ a₋₀ a₋₁
+sqFillUniv :: [Abs Term] -- ^ the bodies of the edges a₀₋ a₁₋ a₋₀ a₋₁, see 'edgeBody'
            -> ReduceM (Maybe Term)
-sqFillUniv [x00, x01, el, x10, x11, er, eu, ed] = do
-  bodies@[bL, bR, bU, bD] <- mapM edgeBody [(x00, x01, el), (x10, x11, er), (x00, x10, eu), (x01, x11, ed)]
+sqFillUniv bodies@[bL, bR, bU, bD] = do
   mPathP <- getBuiltinName' builtinPathP
   mLevel <- getBuiltinName' builtinLevel
-  if all (isJust . constAlongEdge . unAbs) bodies
-    then Just <$> runNamesT [] (open x00 >>= \x -> lam "i" \_ -> lam "j" \_ -> x)
-    else case unAbs bL of
+  case unAbs bL of
 
     -- Π
     Pi aL bBL
@@ -310,13 +305,7 @@ prim_sqFill' = do
           sbC <- reduceB' bC
           let tbC = unArg $ ignoreBlocking sbC
           mSigma      <- getBuiltinName' builtinSigma
-          mUnit       <- getBuiltinName' builtinUnit
-          mBool       <- getBuiltinName' builtinBool
-          mNat       <- getBuiltinName' builtinNat
-          mList       <- getBuiltinName' builtinList
-          mMaybe       <- getBuiltinName' builtinMaybe
           mProduct    <- getBuiltinName' builtinProduct
-          mCoproduct  <- getBuiltinName' builtinCoproduct
           mpath  <- getBuiltinName' builtinPath
           mpathp <- getBuiltinName' builtinPathP
           let
@@ -372,54 +361,11 @@ prim_sqFill' = do
               let ret = apply sqFillSigma [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
               redReturn $ ret `apply` rest
 
-            -- Coproduct
-            Def q [Apply la, Apply lb, Apply bA, Apply bB] | Just q == mCoproduct -> do
-              tmSqFill    <- getTerm "for SqFillCoproduct" builtin_sqFill -- recursive!
-              sqFillCoproduct <- getTerm "for SqFillCoproduct" builtinSqFillCoproduct
-              let sqFillA = apply tmSqFill [la, bA]
-                  sqFillB = apply tmSqFill [lb, bB]
-                  ret = apply sqFillCoproduct [la, lb, bA, defaultArg sqFillA, bB, defaultArg sqFillB]
-              redReturn $ ret `apply` rest
-
-            Def q []
-              | Just q == mUnit -> do
-                reportSDoc "cubical.prim.uip" 40 $ "we are getting Unit type" <+> prettyTCM tbC
-                sqFillUnit <- getTerm "for SqFillUnit" builtinSqFillUnit
-                redReturn $ sqFillUnit `apply` rest
-
-              | Just q == mBool -> do
-                reportSDoc "cubical.prim.uip" 40 $ "we are getting Bool type" <+> prettyTCM tbC
-                sqFillBool <- getTerm "for SqFillBool" builtinSqFillBool
-                redReturn $ sqFillBool `apply` rest
-
-              | Just q == mNat -> do
-                reportSDoc "cubical.prim.uip" 40 $ "we are getting Nat type" <+> prettyTCM tbC
-                sqFillNat <- getTerm "for SqFillNat" builtinSqFillNat
-                redReturn $ sqFillNat `apply` rest
-
-            -- List
-            -- YJ : the required signature for list is @Set -> Set@, and can be prefixed by any number of implicit
-            -- arguments that can probably (CHECK) only be levels, so @{l} -> Set l -> Set l@ and
-            -- @{a b} -> Set a -> Set (lmax a b)@ etc are accepted.
-            -- Instead of getting level from any hidden argument, we use the constraint that the domain and codomain
-            -- must have the same level and take the level from the parameter @A : Type@ of the list.
-            -- [TODO] 1. find the first explicit argument 2. extract the level from it 
-            Def q [Apply la, Apply bA]
-              | Just q == mList -> do
-                  reportSDoc "cubical.prim.uip" 40 $ "we are getting List type" <+> prettyTCM tbC
-                  tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
-                  sqFillList <- getTerm "for SqFillList" builtinSqFillList
-                  let sqFillA = apply tmSqFill [la, bA]
-                  redReturn $ apply sqFillList ([la, bA, defaultArg sqFillA] ++ rest)
-
-            -- [TODO] YJ: Same applies for Maybe.
-            Def q [Apply la, Apply bA]
-              | Just q == mMaybe -> do
-                  reportSDoc "cubical.prim.uip" 40 $ "we are getting Maybe type" <+> prettyTCM tbC
-                  tmSqFill    <- getTerm "for SqFillList" builtin_sqFill -- recursive!
-                  sqFillMaybe <- getTerm "for SqFillMaybe" builtinSqFillMaybe
-                  let sqFillA = apply tmSqFill [la, bA]
-                  redReturn $ apply sqFillMaybe ([la, bA, defaultArg sqFillA] ++ rest)
+            -- Data types (Bool, Nat, List, …) and ⊤ have no builtin proof: they are handled by the
+            -- generic record and data type cases below. The encode-decode proofs they used to have
+            -- left hcomps instead of the expected normal form @c (sqFill args)@ (and for recursive
+            -- types redid the encoding at every constructor), and gave nothing more on neutral
+            -- edges than a stuck hcomp.
 
             -- Note: reducing bC always unfolds _≡_ to PathP, so the Just path' == mpath
             -- guard is never fired in practice; the isNonDep check handles non-dep paths.
@@ -535,10 +481,11 @@ prim_sqFill' = do
                             redReturn $ ret `apply` rest
                           _ -> nored lc sbC rest
 
-                -- Data types (not indexed, not higher inductive): computing the square needs its
-                -- edges, so hand over to prim^sqFillData, which takes all 10 arguments of the
-                -- square except the interval variables. If it is not declared, data types are stuck.
-                Datatype{dataIxs = 0, dataHIT = NotHIT} ->
+                -- Data types: computing the square needs its edges, so hand over to
+                -- prim^sqFillData, which takes all 10 arguments of the square except the interval
+                -- variables. If it is not declared, data types are stuck. Indexed families and HITs
+                -- are handed over too, for the constant square.
+                Datatype{} ->
                   getTerm' builtin_sqFillData >>= \case
                     Just tmSqFillData -> redReturn $ tmSqFillData `apply` (lc : bC : rest)
                     Nothing           -> nored lc sbC rest
@@ -575,10 +522,14 @@ prim_sqFill' = do
 --   edges. (The interval arguments i j are path applications, which reducePrimitive would turn
 --   into plain applications if they were part of the arity.)
 --
---   For data types, like hcomp on data types (compData in Agda.TypeChecking.Primitive.Cubical),
---   it only reduces when all four edges are headed by the same constructor c. The square is
---   then computed in the nested sigma of c's arguments by 'fillVia', as for records.
---   Recursive arguments recurse through prim^sqFill. For universes, see 'sqFillUniv'.
+--   If all four edges are constant (e.g. @refl@ at a neutral point), so are the corners and the
+--   square is constant, at any type. This also makes closed @refl@ squares cheap.
+--
+--   Otherwise, for data types (not indexed, not higher inductive), like hcomp on data types
+--   (compData in Agda.TypeChecking.Primitive.Cubical), it only reduces when all four edges are
+--   headed by the same constructor c. The square is then computed in the nested sigma of c's
+--   arguments by 'fillVia', as for records. Recursive arguments recurse through prim^sqFill.
+--   For universes, see 'sqFillUniv'.
 prim_sqFillData' :: TCM PrimitiveImpl
 prim_sqFillData' = do
   requireCubical CUip
@@ -596,11 +547,15 @@ prim_sqFillData' = do
             -- Must return all arity (= 10) arguments, see reducePrimitive.
             nored = return $ NoReduction $ [notReduced lc, reduced sbC] ++ map notReduced rest
             orNored = maybe nored redReturn
-        case tbC of
+        bodies <- mapM edgeBody [(x00, x01, el), (x10, x11, er), (x00, x10, eu), (x01, x11, ed)]
+        if all (isJust . constAlongEdge . unAbs) bodies then do
+          reportSDoc "cubical.prim.uip" 40 $ "all edges are constant"
+          redReturn =<< runNamesT [] (open x00 >>= \x -> lam "i" \_ -> lam "j" \_ -> x)
+        else case tbC of
           Def q es -> theDef <$> getConstInfo q >>= \case
             Datatype{dataIxs = 0, dataHIT = NotHIT} | Just pars <- allApplyElims es -> do
               reportSDoc "cubical.prim.uip" 40 $ "we have a data type" <+> prettyTCM tbC
-              edges <- mapM edgeCon [(x00, x01, el), (x10, x11, er), (x00, x10, eu), (x01, x11, ed)]
+              edges <- mapM edgeCon bodies
               case edges of
                 [Just (c, argsL), Just (cR, argsR), Just (cU, argsU), Just (cD, argsD)]
                   | all ((conName c ==) . conName) [cR, cU, cD] -> do
@@ -612,7 +567,7 @@ prim_sqFillData' = do
             _ -> nored
           Sort _ -> do
             reportSDoc "cubical.prim.uip" 40 $ "we have a universe" <+> prettyTCM tbC
-            orNored =<< sqFillUniv [x00, x01, el, x10, x11, er, eu, ed]
+            orNored =<< sqFillUniv bodies
           _ -> nored
       _ -> __IMPOSSIBLE__
 
