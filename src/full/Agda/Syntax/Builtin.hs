@@ -889,6 +889,7 @@ data PrimitiveId
   | PrimHComp
   | Prim_uip
   | Prim_sqFill
+  | Prim_sqFillData
   -- | Prim_sqPFill
   --  Integer
   | PrimShowInteger
@@ -1032,6 +1033,7 @@ instance IsBuiltin PrimitiveId where
     PrimHComp                             -> "primHComp"
     Prim_uip                              -> "prim^uip"
     Prim_sqFill                           -> "prim^sqFill"
+    Prim_sqFillData                       -> "prim^sqFillData"
     -- Prim_sqPFill                          -> "prim^sqPFill"
     --  Integer
     PrimShowInteger                       -> "primShowInteger"
@@ -1143,7 +1145,7 @@ instance IsBuiltin PrimitiveId where
 builtinSubOut,
   builtinIMin, builtinIMax, builtinINeg,
   builtinGlue, builtin_glue, builtin_unglue, builtin_glueU, builtin_unglueU,
-  builtin_sqFill,
+  builtin_sqFill, builtin_sqFillData,
   -- builtin_uip, builtin_sqPFill,
   builtinFaceForall, builtinComp, builtinPOr,
   builtinTrans,  builtinHComp, builtinLockUniv, builtinRewriteNoMatch
@@ -1158,6 +1160,7 @@ builtin_unglue                           = Prim_unglue
 builtin_glueU                            = Prim_glueU
 builtin_unglueU                          = Prim_unglueU
 builtin_sqFill                           = Prim_sqFill
+builtin_sqFillData                       = Prim_sqFillData
 -- builtin_uip                              = Prim_uip
 -- builtin_sqPFill                          = Prim_sqPFill
 builtinFaceForall                        = PrimFaceForall
