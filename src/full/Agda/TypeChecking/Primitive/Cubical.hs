@@ -510,8 +510,12 @@ primTransHComp cmd ts nelims = do
             | DoTransp <- cmd -> redReturn $ unArg u0
             -- hcomp {Type} is actually a normal form! This is the
             -- "HCompU" optimisation; We do not use Glue for hcomp in
-            -- the universe.
-            | DoHComp <- cmd -> fallback
+            -- the universe. With --cubical=uip, it computes by the type
+            -- formers of the base and the tubes instead (see 'hcompUniv').
+            | DoHComp <- cmd -> cubicalOption >>= \case
+                Just CUip -> maybe fallback redReturn =<<
+                  hcompUniv (unArg $ ignoreBlocking sphi) (unArg $ fromMaybe __IMPOSSIBLE__ u) (unArg u0)
+                _ -> fallback
 
           -- Glue types have their own implementation of Kan operations
           -- which are implemented in a different module:
