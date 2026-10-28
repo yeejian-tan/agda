@@ -1,3 +1,3 @@
 Issue2788.agda:8.1-28: error: [NeedOptionCubical]
-Option --cubical[={full,erased,no-glue}] required
+Option --cubical[={full,erased,no-glue,uip}] required
 when checking the pragma BUILTIN EQUIV Equiv
