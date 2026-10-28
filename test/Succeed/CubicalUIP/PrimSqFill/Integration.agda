@@ -10,11 +10,11 @@ open import Agda.Builtin.List
 open import Agda.Builtin.Maybe
 open import Agda.Builtin.Sigma
 open import Agda.Builtin.Product
-open import Agda.Builtin.Coproduct
 
 -- Structural: the reduct of the primitive is the composition of the builtin SqFill*.
--- Every type former appears: Pi, Σ (dependent), × (non-dependent Σ), ⊎, ⊤, Bool, Nat,
--- List, Maybe, ≡ (non-dependent PathP), PathP, records, and a neutral family B.
+-- Every type former appears: Pi, Σ (dependent), × (non-dependent Σ), ≡ (non-dependent PathP),
+-- PathP, records, a neutral family B, and the types without a builtin proof (⊤, Bool, Nat, List,
+-- Maybe, ⊎; see Data.agda and Unit.agda), which stay as sqFill.
 module Structural (A : Type) (a : A) (B : Bool → Type) {x y : Bool} (q : x ≡ y) (b₀ : B x) (b₁ : B y) where
 
   record R : Type where
@@ -41,14 +41,14 @@ module Structural (A : Type) (a : A) (B : Bool → Type) {x y : Bool} (q : x ≡
   manual = SqFillPi Nat (λ _ → Body) λ _ →
     SqFillProduct (Σ (Bool × Maybe (List A)) F)
       (SqFillSigma (Bool × Maybe (List A))
-        (SqFillProduct Bool SqFillBool (Maybe (List A)) (SqFillMaybe (List A) (SqFillList A (sqFill A))))
+        (SqFillProduct Bool (sqFill Bool) (Maybe (List A)) (sqFill (Maybe (List A))))
         F λ p →
         SqFillProduct (B (fst p) ⊎ R)
-          (SqFillCoproduct (B (fst p)) (sqFill (B (fst p))) R (sqFill R))
+          (sqFill (B (fst p) ⊎ R))
           (a ≡ a) (SqFillPath A a a (sqFill A)))
       (P × (Nat × ⊤))
       (SqFillProduct P (SqFillPathP (B x) (B y) b₀ b₁ (λ i → B (q i)) (sqFill (B x)))
-        (Nat × ⊤) (SqFillProduct Nat SqFillNat ⊤ SqFillUnit))
+        (Nat × ⊤) (SqFillProduct Nat (sqFill Nat) ⊤ (sqFill ⊤)))
 
   check : (λ {lu} {ld} → prim {lu} {ld}) ≡ manual
   check k = prim

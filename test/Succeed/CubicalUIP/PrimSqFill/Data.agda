@@ -51,3 +51,19 @@ module Stuck (A : Type) {x₀₀ x₀₁ x₁₀ x₁₁ : Tree A}
        (l : x₀₀ ≡ x₀₁) (r : x₁₀ ≡ x₁₁) (u : x₀₀ ≡ x₁₀) (d : x₀₁ ≡ x₁₁) where
 
   sq = sqFill (Tree A) l r u d
+
+-- Constant squares are constant at any data type, including indexed families, even when the
+-- point is neutral.
+module Constant where
+
+  data Vec {ℓ} (A : Type ℓ) : Nat → Type ℓ where
+    []  : Vec A zero
+    _∷_ : ∀ {n} → A → Vec A n → Vec A (suc n)
+
+  module _ {ℓ} (A : Type ℓ) (t : Tree A) {n : Nat} (v : Vec A n) where
+
+    checkTree : sqFill (Tree A) {t} {t} refl {t} {t} refl refl refl ≡ refl
+    checkTree _ _ _ = t
+
+    checkVec : sqFill (Vec A n) {v} {v} refl {v} {v} refl refl refl ≡ refl
+    checkVec _ _ _ = v
