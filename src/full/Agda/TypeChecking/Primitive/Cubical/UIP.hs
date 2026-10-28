@@ -1,7 +1,11 @@
 module Agda.TypeChecking.Primitive.Cubical.UIP (
   -- prim_sqPFill', prim_uip',
-  prim_sqFill', prim_sqFillData'
+  prim_sqFill', prim_sqFillData', hcompUniv
   ) where
+
+import Control.Monad (forM)
+import Data.List (uncons)
+import qualified Data.IntMap as IntMap
 
 import Agda.TypeChecking.Monad
 -- import Agda.TypeChecking.Primitive.Cubical
@@ -571,6 +575,182 @@ prim_sqFillData' = do
           _ -> nored
       _ -> __IMPOSSIBLE__
 
+
+-- | hcomp at a universe in --cubical=uip. As for squares of types ('sqFillUniv'), the universe
+--   is treated as an inductive type whose constructors are the type formers, in the
+--   implementation only (there is no typecase in the object theory): the composition only
+--   reduces when the base and the tubes on all faces of φ are headed by the same type former,
+--
+--   * Π, where the sorts of the domain and codomain must be constant along the tubes, and the
+--     hiding and modality of the domain must agree;
+--   * a data or record type @q@, where the leading arguments that cannot go into a Σ (e.g.
+--     levels) must be the same in the base and all tubes;
+--   * the same universe or the same type variable, without arguments.
+--
+--   It is then computed in the nested Σ of the arguments, and the type former re-applied:
+--
+--     hcomp {Type} [φ ↦ λ i → h (args i)] (h args₀)
+--       = h (unnest (hcomp {Σ} [φ ↦ λ i → nest (args i)] (nest args₀)))
+--
+--   On φ the composition in Σ is @nest (args i1)@, and @unnest (nest x) = x@ by eta, so the
+--   boundary holds definitionally. The composition in Σ reduces further when projected, by
+--   composition in the components (Π: transport in the domain, composition in the codomain).
+--
+--   There is no rule for constant tubes (that would be regularity, which does not agree with the
+--   rule for Π, whose codomain contains transports along constant lines). Otherwise the
+--   composition stays stuck, as the formal type HCompU with its Kan operations (via glueU), as
+--   without --cubical=uip.
+hcompUniv :: Term -- ^ φ
+          -> Term -- ^ the tubes @u : I → Partial φ (Type ℓ)@
+          -> Term -- ^ the base @u0 : Type ℓ@
+          -> ReduceM (Maybe Term)
+hcompUniv phi u u0 = do
+  faces  <- decomposeInterval phi
+  unview <- intervalUnview'
+  iO     <- getTerm "hcomp at Type" builtinIOne
+  tMin   <- getTerm "hcomp at Type" builtinIMin
+  tNeg   <- getTerm "hcomp at Type" builtinINeg
+  -- each face of φ as an interval term, with the tube on it under the binder i
+  let tube (bs, _) = do
+        let bs'    = IntMap.toAscList $ IntMap.map (\ b -> unview $ if b then IOne else IZero) bs
+            -- Γ₁, j : I, Γ₂ ⊢ weaken : Γ₁, Γ₂, putting back the face variables j
+            weaken = foldr (\ j σ -> σ `composeS` raiseFromS j 1) idS (map fst bs')
+            lit (j, b) = if b then var j else tNeg `apply` [argN (var j)]
+            psi    = foldr (\ jb acc -> tMin `apply` [argN (lit jb), argN acc]) iO (IntMap.toList bs)
+        -- the body of λ i o → u i o on the face, under i and the (irrelevant) proof o of the face
+        body <- applySubst (liftS 2 weaken) . ignoreBlocking <$> reduce2Lam (listS bs' `applySubst` u)
+        pure $ if 0 `freeIn` body then Nothing
+               else Just (psi, applySubst (strengthenS impossible 1) body)
+  -- faces that are not conjunctions of literals are not supported
+  mtubes <- if null faces || any (not . null . snd) faces then pure Nothing
+            else sequence <$> mapM tube faces
+  base <- reduce u0
+  reportSDoc "cubical.prim.uip.hcomp" 40 $ "hcomp at Type, base" <+> prettyTCM base
+  case mtubes of
+    Nothing    -> do
+      reportSDoc "cubical.prim.uip.hcomp" 40 $ "unsupported faces" <+> pretty faces
+      pure Nothing
+    Just tubes -> do
+      reportSDoc "cubical.prim.uip.hcomp" 40 $ "tubes" <+> pretty (map snd tubes)
+      let bodies = map snd tubes
+      case base of
+
+        -- Π
+        Pi a b | Just parts <- mapM piParts bodies, all (sameDom a . fst) parts -> do
+          sA <- reduce $ getSort (unDom a)
+          sB <- reduce $ getSort (absBody b)
+          -- the sorts of the tubes must not depend on i, the codomain's not on its variable
+          tubeSorts <- forM parts $ \ (a', b') -> do
+            sA' <- reduce $ getSort (unDom a')
+            sB' <- reduce $ getSort (absBody b')
+            pure $ isJust (constAlongEdge sA') && isJust (constAlongEdge =<< constAlongEdge sB')
+          case constAlongEdge sB of
+            Just sB0 | and tubeSorts -> do
+              let doms =
+                    [ defaultDom ("A", sort sA)
+                    , defaultDom ("B", El (FunSort (raise 1 sA) (univSort (raise 1 sB0))) $
+                        Pi (defaultDom (El (raise 1 sA) (var 0))) (NoAbs "_" (sort (raise 1 sB0)))) ]
+                  args (a', b') = [defaultArg (unEl (unDom a')), defaultArg (Lam defaultArgInfo (unEl <$> b'))]
+                  rebuild = \case
+                    [bA, bB] -> Pi (setDom a (El sA (unArg bA))) $
+                      Abs (absName b) $ El (raise 1 sB0) $ raise 1 (unArg bB) `apply` [defaultArg (var 0)]
+                    _ -> __IMPOSSIBLE__
+              compVia doms rebuild (args (a, b)) [ (psi, Abs "i" (args ps)) | ((psi, _), ps) <- zip tubes parts ]
+            _ -> pure Nothing
+
+        -- data and record types
+        Def q es | Just args0 <- properApplies es, Just argss <- mapM (defArgs q) bodies -> do
+          info <- getConstInfo q
+          case theDef info of
+            d | isDataOrRecordType d -> do
+              tel <- theTel <$> telView (defType info)
+              mLevel <- getBuiltinName' builtinLevel
+              let isLevel t = case unEl t of
+                    Def l [] -> Just l == mLevel
+                    _        -> False
+                  -- the prefix of arguments that cannot go into a Σ, which must be the same in
+                  -- the base and all tubes (constant in i)
+                  splitConst consts tel'@(ExtendTel dom rest) (a : as) tas = do
+                    s <- reduce $ getSort (unDom dom)
+                    case s of
+                      Type{} | not (isLevel (unDom dom)) -> pure $ Just (reverse consts, tel', a : as, tas)
+                      _ | Just tas' <- mapM uncons tas -> do
+                            same <- allSame (unArg a) (map (fmap unArg . constAlongEdge . fst) tas')
+                            if same then splitConst (a : consts) (absApp rest (unArg a)) as (map snd tas')
+                            else pure Nothing
+                        | otherwise -> pure Nothing
+                  splitConst consts tel' as tas = pure $ Just (reverse consts, tel', as, tas)
+              if size tel /= length args0 || any ((size tel /=) . length) argss then pure Nothing else
+                splitConst [] tel args0 argss >>= \case
+                  Nothing -> do
+                    reportSDoc "cubical.prim.uip.hcomp" 40 $ "leading arguments differ"
+                    pure Nothing
+                  Just (consts, tel', fields0, fieldss) ->
+                    compVia (telToList tel') (\ fields -> Def q $ map Apply (consts ++ fields)) fields0
+                      [ (psi, Abs "i" fs) | ((psi, _), fs) <- zip tubes fieldss ]
+            _ -> pure Nothing
+
+        -- the same universe or type variable, without arguments
+        t | atomic t -> do
+          same <- allSame t (map constAlongEdge bodies)
+          pure $ if same then Just u0 else Nothing
+
+        _ -> pure Nothing
+  where
+    piParts (Pi a b) = Just (a, b)
+    piParts _        = Nothing
+    sameDom a a' = getHiding a == getHiding a' && getModality a == getModality a'
+    -- the domain with the given type, dropping its tactic and rewrite annotations
+    setDom (Dom ai nm fin _ _ _) t = Dom ai nm fin Nothing Nothing t
+    defArgs q (Def q' es) | q == q' = properApplies es
+    defArgs _ _ = Nothing
+    isDataOrRecordType = \case
+      Datatype{} -> True
+      Record{}   -> True
+      _          -> False
+    atomic = \case
+      Sort{}    -> True
+      Var _ []  -> True
+      _         -> False
+    -- the term and the tube terms (Nothing if they depend on i) are the same up to normalisation,
+    -- e.g. of levels
+    allSame :: Term -> [Maybe Term] -> ReduceM Bool
+    allSame t ts = case sequence ts of
+      Nothing  -> pure False
+      Just ts' -> do
+        t' <- normalise t
+        all (t' ==) <$> mapM normalise ts'
+
+    -- Compose in the nested Σ of the arguments of a type former and re-apply it, given the
+    -- telescope of the arguments, the arguments of the base and those of the tubes under i.
+    compVia :: [Dom (ArgName, Type)] -> ([Arg Term] -> Term) -> [Arg Term]
+            -> [(Term, Abs [Arg Term])] -> ReduceM (Maybe Term)
+    compVia doms rebuild args0 tubeArgs
+      | null doms = pure $ Just $ rebuild []
+      -- [TODO] irrelevant arguments cannot be nested into a Σ
+      | not (all isRelevant doms) = pure Nothing
+      | otherwise = sigmaKit >>= \case
+        Nothing -> pure Nothing -- the SIGMA builtin is not bound
+        Just (sigma, pair, pfst, psnd) ->
+          telListToSigma sigma pfst psnd (map (snd . unDom) doms) >>= \case
+            Nothing -> do
+              reportSDoc "cubical.prim.uip.hcomp" 40 $ "arguments cannot be nested into a Σ" <+> pretty doms
+              pure Nothing
+            Just (sigmaT, lSigma) -> do
+              tHComp <- getTerm "hcomp at Type" builtinHComp
+              let nest = foldl1 (\ acc y -> Con pair ConOSystem [Apply (defaultArg acc), Apply (defaultArg y)])
+                       . map unArg
+              hc <- runNamesT [] $ do
+                l     <- open (Level lSigma)
+                ty    <- open sigmaT
+                phi'  <- open phi
+                base' <- open (nest args0)
+                sides <- forM tubeArgs $ \ (psi, as) -> (,) <$> open psi <*> open (Lam defaultArgInfo (nest <$> as))
+                pure tHComp <#> l <#> ty <#> phi'
+                  <@> lam "i" (\ i -> combineSys l ty [ (psi, ilam "o" $ \ _ -> side <@> i) | (psi, side) <- sides ])
+                  <@> base'
+              pure $ Just $ rebuild
+                [ v <$ argFromDom dom | (dom, v) <- zip doms (sigmaProjs pfst psnd (length doms) hc) ]
 
 -- -- Only for Type.
 -- prim_sqPFill' :: TCM PrimitiveImpl
