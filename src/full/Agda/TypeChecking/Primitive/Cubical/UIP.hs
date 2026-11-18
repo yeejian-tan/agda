@@ -79,18 +79,27 @@ fieldLevel k t = reduce (getSort t) >>= \case
   _ -> pure Nothing
 
 -- | The edge @e : x ≡ y@ at a generic point k, in weak head normal form.
+-- [TODO] YJ: isn't this [λ k. e k], so eta expanding then evaluating?
 edgeBody :: (Term, Term, Term) -> ReduceM (Abs Term)
 edgeBody (x, y, e) = reduce $ Abs "k" $ raise 1 e `applyE` [IApply (raise 1 x) (raise 1 y) (var 0)]
 
 -- | The constructor heading an edge body (see 'edgeBody'), with its arguments under k, if the
 --   edge is constructor-headed. Natural number literals count as constructor-headed
 --   (@4 = suc 3@).
+-- [TODO] YJ: why do we 
 edgeCon :: Abs Term -> ReduceM (Maybe (ConHead, Abs [Arg Term]))
+-- YJ: constructorFormer to convert literals to constructors.
+-- YJ: [a <&> b = b <$> a] is the flipped fmap
 edgeCon b = constructorFormer <&> \conForm -> case conForm <$> b of
+  -- YJ: this branch activates if (constructorFormer b) is of the form 
+  --     [λ k. c es] for some constructor [c] and arguments [es].
+  -- [TODO] YJ: why does es have to be all proper applies? 
+  --            as written in Con, datatypes could have iapply and elim arguments
   Abs k (Con c _ es) | Just args <- properApplies es -> Just (c, Abs k args)
   _ -> Nothing
 
 -- | The arguments of a spine of applications, if there are only (non-path) applications.
+-- [TODO] YJ: so properApplies returns Nothing if any elim is not an apply?
 properApplies :: Elims -> Maybe [Arg Term]
 properApplies = mapM \case
   Apply a -> Just a
@@ -98,6 +107,7 @@ properApplies = mapM \case
 
 -- | Strengthen a term under the edge variable k (de Bruijn index 0) out of it, if it does not
 --   depend on k.
+-- [TODO] YJ: why the [SubstArg a ~ Term]?
 constAlongEdge :: (Free a, Subst a, SubstArg a ~ Term) => a -> Maybe a
 constAlongEdge a
   | 0 `freeIn` a = Nothing
@@ -116,14 +126,19 @@ fillVia :: [Dom (ArgName, Type)] -> (Int -> [Arg Term] -> Term)
         -> ReduceM (Maybe Term)
 fillVia doms rebuild argsL argsR argsU argsD
   -- no arguments: the constant square
+  -- YJ: null tests if a foldable is empty
   | null doms = Just <$> runNamesT [] (lam "i" \_ -> lam "j" \_ -> pure $ rebuild 2 [])
-  -- [TODO] irrelevant arguments cannot be nested into a Σ
+  -- [TODO] YJ: why irrelevant arguments cannot be nested into a Σ?
   | not (all isRelevant doms) = pure Nothing
   | otherwise = sigmaKit >>= \case
     Nothing -> pure Nothing -- the SIGMA builtin is not bound
     Just (sigma, pair, pfst, psnd) ->
+      -- YJ: takes the doms of the constructor/typeformer, undom it and look at type only (snd),
+      --      and turn it into a tel list
       telListToSigma sigma pfst psnd (map (snd . unDom) doms) >>= \case
         Nothing -> pure Nothing
+        -- YJ: sigmaT is a tel, lsigma is the level of sigma.
+        -- [FIXME] YJ: how is the level calculated?
         Just (sigmaT, lSigma) -> do
           tmSqFill <- getTerm "for SqFillData" builtin_sqFill -- recursive!
           iZ <- getTerm "for SqFillData" builtinIZero
@@ -131,6 +146,7 @@ fillVia doms rebuild argsL argsR argsU argsD
           let
             -- the arguments as a nested pair
             nest :: [Arg Term] -> Term
+            -- [TODO] YJ: foldl1 takes a non-empty list. How sure are we?? should we use _IMPOSSIBLE_?
             nest = foldl1 (\acc y -> Con pair ConOSystem [Apply (defaultArg acc), Apply (defaultArg y)]) . map unArg
             -- a nested pair as a point, under the binders i j
             unnest :: Term -> Term
@@ -534,6 +550,10 @@ prim_sqFill' = do
 --   headed by the same constructor c. The square is then computed in the nested sigma of c's
 --   arguments by 'fillVia', as for records. Recursive arguments recurse through prim^sqFill.
 --   For universes, see 'sqFillUniv'.
+-- YJ: Maybe this is needed exactly because we needed 10 arguments to compute them
+--     and we cannot do that within prim_sqFill since it takes 2 only: level and type
+--     Cases that need 10 arguments = 2 + 4 total corners + 4 total sides :
+--     (1) datatypes to inspect the edges (2) universe too (3) non-eta records?
 prim_sqFillData' :: TCM PrimitiveImpl
 prim_sqFillData' = do
   requireCubical CUip
@@ -550,25 +570,39 @@ prim_sqFillData' = do
             [x00, x01, el, x10, x11, er, eu, ed] = map unArg [ax00, ax01, ael, ax10, ax11, aer, aeu, aed]
             -- Must return all arity (= 10) arguments, see reducePrimitive.
             nored = return $ NoReduction $ [notReduced lc, reduced sbC] ++ map notReduced rest
-            orNored = maybe nored redReturn
+            orNored = maybe nored redReturn -- YJ: if input is Nothing, then return nored, else apply redReturn to it.
+        -- YJ: returns a list of 4 terms, basically edges [λk.e k] that are reduced.
+        -- [TODO] YJ: why do we need to eta expand before reducing?
         bodies <- mapM edgeBody [(x00, x01, el), (x10, x11, er), (x00, x10, eu), (x01, x11, ed)]
         if all (isJust . constAlongEdge . unAbs) bodies then do
           reportSDoc "cubical.prim.uip" 40 $ "all edges are constant"
+          -- YJ: the bodies are disregarded and only use the top left corner for the whole square
+          -- YJ: precondition: all edges are constant implies that the corners are convertible
+          -- [TODO] YJ: assert this and impossible otherwise?
           redReturn =<< runNamesT [] (open x00 >>= \x -> lam "i" \_ -> lam "j" \_ -> x)
         else case tbC of
           Def q es -> theDef <$> getConstInfo q >>= \case
+            -- [TODO] YJ: why do indexed datatypes differently? any counteregs to edge chcking?
+            -- [TODO] YJ: why do HITs differently? Probably because of hcomp as a higher constructor,
+            --            but edges that start with the same constructor can be reduced similarly, right?
+            --            This is a shortcut computation to adding sqfill as a constructor, just like hcomp?
             Datatype{dataIxs = 0, dataHIT = NotHIT} | Just pars <- allApplyElims es -> do
               reportSDoc "cubical.prim.uip" 40 $ "we have a data type" <+> prettyTCM tbC
               edges <- mapM edgeCon bodies
               case edges of
+                -- YJ: all edges start with a constructor (otherwise nothing)
                 [Just (c, argsL), Just (cR, argsR), Just (cU, argsU), Just (cD, argsD)]
+                  -- YJ: ... and all constructors have the same name
                   | all ((conName c ==) . conName) [cR, cU, cD] -> do
+                  -- YJ: then get the type of the constructor, apply params to it, translate the telescope to a list
+                  -- YJ: i.e. getting the argument's domains as a list of types.
                   argDoms <- telToList . theTel <$>
                     (telView . (`piApply` pars) . defType =<< getConstInfo (conName c))
                   reportSDoc "cubical.prim.uip" 40 $ "all edges are headed by" <+> prettyTCM (conName c)
+                  -- [FIXME] YJ guess: fillVia takes the argDoms list, the edges, and returns the square pushed into the arguments.
                   orNored =<< fillVia argDoms (\_ -> Con c ConOSystem . map Apply) argsL argsR argsU argsD
-                _ -> nored
-            _ -> nored
+                _ -> nored -- YJ: not all edges start with constructor, no reduction possible.
+            _ -> nored -- YJ: not a (non-indexed, non-HIT) datatype, handled by this function's caller
           Sort _ -> do
             reportSDoc "cubical.prim.uip" 40 $ "we have a universe" <+> prettyTCM tbC
             orNored =<< sqFillUniv bodies
